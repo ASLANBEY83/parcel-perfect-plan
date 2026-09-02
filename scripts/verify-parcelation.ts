@@ -191,3 +191,35 @@ for (const p of C.block.parcels) {
   );
 }
 console.log("gerekli min derinlik (on+arka+minBuildingDepth):", 6 + 7 + defaultParams.minBuildingDepth);
+
+// --- REGRESYON: 290-330 m² + 6/4/7 setback ---
+console.log("\n=== REGRESYON TESTİ (290-330 + 6/4/7) ===");
+const R = runTest("REG (290-330, 6/4/7)", ring, {
+  minArea: 290,
+  maxArea: 330,
+  frontSetback: 6,
+  sideSetback: 4,
+  rearSetback: 7,
+});
+console.log(JSON.stringify(R.out, null, 2));
+const rp = R.block.parcels;
+const assertions: [string, boolean][] = [
+  ["330 m² üzeri parsel geçerli sayılmıyor", !rp.some((x) => x.valid && x.area > 330)],
+  ["290 m² altı parsel geçerli sayılmıyor", !rp.some((x) => x.valid && x.area < 290)],
+  ["393-668 m² büyük parseller geçerli değil", !rp.some((x) => x.valid && x.area > 340)],
+  [
+    "yapılaşabilirlik yetersizliği açık red nedeni",
+    rp.filter((x) => !x.valid).every((x) => x.issues.some((i) => !i.startsWith("ℹ"))) &&
+      rp.some((x) => x.issues.some((i) => /derinlik|yapı alanı|çekme|alan/i.test(i))),
+  ],
+  ["TEST A alan aralığı ihlali yok", !A.block.parcels.some((x) => x.valid && (x.area < 275 || x.area > 400))],
+  ["TEST B alan aralığı ihlali yok", !B.block.parcels.some((x) => x.valid && (x.area < 290 || x.area > 330))],
+  ["TEST C geçerli parsellerde alan ihlali yok", !C.block.parcels.some((x) => x.valid && (x.area < 275 || x.area > 400))],
+];
+let failCount = 0;
+for (const [name, ok] of assertions) {
+  if (!ok) failCount++;
+  console.log(`${ok ? "PASS" : "FAIL"} - ${name}`);
+}
+console.log(`\nREGRESYON SONUÇ: ${assertions.length - failCount}/${assertions.length} geçti`);
+if (failCount) process.exitCode = 1;

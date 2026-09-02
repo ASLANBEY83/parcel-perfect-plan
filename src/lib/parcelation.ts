@@ -813,14 +813,33 @@ function buildRowParcels(
       hard++;
       issues.push(m);
     };
-    if (area < p.minArea) fail(`Alan ${area.toFixed(1)} m² < ${p.minArea} m²`);
-    // Yapılaşma şartları sağlanabilsin diye maksimum alan sınırı aşılabilir (bilgi amaçlı).
-    if (area > p.maxArea) issues.push(`ℹ Alan ${area.toFixed(1)} m² > ${p.maxArea} m² (yapı şartı için izin verildi)`);
+    // Parsel alanı HARD CONSTRAINT: kullanıcının girdiği min–max aralığı dışı geçersizdir.
+    if (area < p.minArea)
+      fail(`Parsel alanı minimum değerin altında: ${area.toFixed(1)} m² < ${p.minArea} m²`);
+    if (area > p.maxArea)
+      fail(`Parsel alanı maksimum değerin üzerinde: ${area.toFixed(1)} m² > ${p.maxArea} m²`);
     const minF = corner ? p.cornerFront : p.midFront;
     if (frontage < minF - 1e-6)
       fail(`${corner ? "Köşe" : "Ara"} parsel cephesi ${frontage.toFixed(2)} m < ${minF} m`);
-    if (!bld.ring) fail("Kurallara uygun yapı bloğu oluşturulamadı");
-    else {
+    if (!bld.ring) {
+      // Red nedenini ayrıştır: önleyici geometrik kapasite kontrolü.
+      const requiredDepth = p.frontSetback + p.rearSetback + p.minBuildingDepth;
+      const usableDepth = depth;
+      const envArea = envelope.length >= 3 ? Math.abs(ringArea(envelope)) : 0;
+      if (envelope.length < 3)
+        fail(
+          `Ön/yan/arka çekme (${p.frontSetback}/${p.sideSetback}/${p.rearSetback} m) nedeniyle yapı yaklaşma sınırı oluşmuyor`,
+        );
+      else if (usableDepth < requiredDepth - 1e-6)
+        fail(
+          `Yapılaşabilir minimum derinlik sağlanamıyor: kullanılabilir ${usableDepth.toFixed(2)} m < gerekli ${requiredDepth.toFixed(2)} m (ön ${p.frontSetback} + arka ${p.rearSetback} + yapı ${p.minBuildingDepth})`,
+        );
+      else if (envArea < p.minBuildingArea - 1e-6)
+        fail(
+          `Çekme mesafelerinden sonra kalan yapı alanı ${envArea.toFixed(1)} m² < ${p.minBuildingArea} m²`,
+        );
+      else fail("Kurallara uygun yapı bloğu oluşturulamadı");
+    } else {
       if (bld.area < p.minBuildingArea) fail(`Yapı alanı ${bld.area.toFixed(1)} m² < ${p.minBuildingArea} m²`);
       if (bld.front < p.minBuildingFront) fail(`Yapı cephesi ${bld.front.toFixed(2)} m < ${p.minBuildingFront} m`);
       if (bld.depth < p.minBuildingDepth - 1e-4) fail(`Yapı derinliği ${bld.depth.toFixed(2)} m < ${p.minBuildingDepth} m`);
@@ -868,7 +887,8 @@ function scoreSolution(parcels: Parcel[], p: Params, tolUsed: number): number {
   const valid = parcels.filter((x) => x.valid);
   const inRange = parcels.filter((x) => x.area >= p.minArea && x.area <= p.maxArea).length;
   const bldSd = stddev(valid.map((x) => x.buildingArea));
-  // Maksimum alan aşımı yasak değil, sadece hafif cezalandırılır.
+  // Maksimum alan aşımı artık HARD CONSTRAINT (parsel geçersiz olur); buradaki ceza
+  // yalnızca aynı geçerli parsel sayısına sahip çözümler arasında ayrım içindir.
   const overflow = parcels.reduce((s, x) => s + Math.max(0, x.area - p.maxArea), 0);
   const W = SOLUTION_SCORE_WEIGHTS;
   return (
@@ -928,12 +948,15 @@ function solveRow(
     };
     // Öncelik sırası: köşe parsellerin yapılaşma şartı → toplam geçerli parsel
     // → parsel alanlarının eşitliği (skor içinde ağırlıklı) .
+    // Öncelik: TOPLAM GEÇERLİ PARSEL SAYISI → köşe parsellerin uygunluğu → skor.
+    // (Geçersiz alanlı/yapılaşamayan parseller "geçerli" sayılmadığı için büyük parsel
+    // üretip başarısızlığı gizleyen çözümler bu sıralamada öne geçemez.)
     const better = (a: RowSolution, b: RowSolution | null) => {
       if (!b) return true;
+      if (a.validCount !== b.validCount) return a.validCount > b.validCount;
       const ca = cornerValidCount(a.parcels);
       const cb = cornerValidCount(b.parcels);
       if (ca !== cb) return ca > cb;
-      if (a.validCount !== b.validCount) return a.validCount > b.validCount;
       return a.score > b.score;
     };
     const cornersOk = (s: RowSolution) =>
