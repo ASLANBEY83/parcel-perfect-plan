@@ -86,6 +86,7 @@ function Index() {
   const [selected, setSelected] = useState<{ block: BlockResult; parcel: Parcel } | null>(null);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [elapsed, setElapsed] = useState(0);
   const workerRef = useRef<Worker | null>(null);
   const jobRef = useRef(0);
   const [notice, setNotice] = useState<string | null>(null);
