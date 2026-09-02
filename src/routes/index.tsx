@@ -54,7 +54,7 @@ export const Route = createFileRoute("/")({
       {
         name: "description",
         content:
-          "DXF imar adalarını gerçek geometriyle analiz eden, 290-330 m² parsel ve yapılaşma kurallarını sağlayan maksimum sayıda geçerli parsel üreten teknik uygulama.",
+          `DXF imar adalarını gerçek geometriyle analiz eden, ${defaultParams.minArea}-${defaultParams.maxArea} m² parsel ve yapılaşma kurallarını sağlayan maksimum sayıda geçerli parsel üreten teknik uygulama.`,
       },
       { property: "og:title", content: "Parselasyon Optimizasyon Uygulaması" },
       {

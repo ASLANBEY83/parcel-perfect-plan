@@ -103,7 +103,7 @@ export function auditParcel(block: BlockResult, p: Parcel, params: Params): Parc
     hasEnv ? "Oluşturuldu" : "Oluşturulamadı",
     hasEnv,
     hasEnv
-      ? "Tüm yola cepheli kenarlardan 5 m, komşu sınırlardan 3 m çekilerek yapı inşaat hattı üretildi."
+      ? `Yol cephelerinden ${params.frontSetback} m, yan komşu sınırlarından ${params.sideSetback} m, arka sınırdan ${params.rearSetback} m çekilerek yapı inşaat hattı üretildi.`
       : "Çekme mesafeleri uygulandığında geriye kapalı bir yapı alanı kalmadı.",
   );
 
