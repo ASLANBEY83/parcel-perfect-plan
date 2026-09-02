@@ -336,9 +336,28 @@ function Index() {
                 <FileText /> Örnek Ada
               </Btn>
             </div>
-            <Btn onClick={() => compute(false)} disabled={busy || !adaRings.length}>
-              <Play /> {busy ? "Hesaplanıyor…" : "Parselasyonu Hesapla"}
-            </Btn>
+            {busy ? (
+              <div className="space-y-2">
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                  <div
+                    className="h-full rounded-full bg-primary transition-all"
+                    style={{
+                      width: progress && progress.total ? `${(progress.done / progress.total) * 100}%` : "25%",
+                    }}
+                  />
+                </div>
+                <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+                  Hesaplanıyor{progress ? ` · ${progress.done}/${progress.total} ada` : "…"}
+                </p>
+                <Btn small variant="ghost" onClick={cancelCompute}>
+                  <X /> Vazgeç
+                </Btn>
+              </div>
+            ) : (
+              <Btn onClick={() => compute(false)} disabled={!adaRings.length}>
+                <Play /> Parselasyonu Hesapla
+              </Btn>
+            )}
             <div className="grid grid-cols-2 gap-2">
               <Btn small variant="ghost" onClick={() => compute(true)} disabled={busy || adaRings.length < 2}>
                 <Layers /> Tüm adalar ({adaRings.length})
