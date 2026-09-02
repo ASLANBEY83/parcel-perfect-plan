@@ -9,6 +9,42 @@ import { download, downloadZip, exportAuditCSV, exportCSV, exportDXF, exportGeoJ
 import { openReportPdf } from "@/lib/report";
 import { sampleDxf } from "@/lib/sample";
 import { TM_PRESETS, guessTM, tmToLonLat } from "@/lib/basemap";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
+import { Slider } from "@/components/ui/slider";
+import { cn } from "@/lib/utils";
+import { Crosshair, Download, FileText, Layers, Map as MapIcon, Play, RefreshCw, SlidersHorizontal, Upload } from "lucide-react";
+
+function PanelItem({
+  value,
+  title,
+  icon,
+  children,
+}: {
+  value: string;
+  title: string;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <AccordionItem
+      value={value}
+      className="overflow-hidden rounded-lg border border-border/70 bg-background/40 last:border-b"
+    >
+      <AccordionTrigger className="px-3 py-2.5 font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-primary hover:no-underline">
+        <span className="flex items-center gap-2">
+          {icon}
+          {title}
+        </span>
+      </AccordionTrigger>
+      <AccordionContent className="space-y-2.5 border-t border-border/60 px-3 pb-3 pt-3">{children}</AccordionContent>
+    </AccordionItem>
+  );
+}
+
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -210,67 +246,92 @@ function Index() {
         {/* SOL PANEL */}
         <aside
           style={{ ["--panel-w" as string]: `${leftW}px` }}
-          className={`min-h-0 w-full shrink-0 overflow-y-auto bg-panel p-4 lg:block lg:w-[var(--panel-w)] lg:border-r lg:border-border ${
+          className={`min-h-0 w-full shrink-0 overflow-y-auto bg-panel/95 p-3 lg:block lg:w-[var(--panel-w)] lg:border-r lg:border-border ${
             tab === "ayarlar" ? "block flex-1" : "hidden"
           }`}
         >
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".dxf,.dwg"
+            className="hidden"
+            onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])}
+          />
 
-          <Section title="Dosya">
-            <input
-              ref={fileRef}
-              type="file"
-              accept=".dxf,.dwg"
-              className="hidden"
-              onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])}
-            />
-            <Btn onClick={() => fileRef.current?.click()}>DXF Yükle</Btn>
-            <Btn variant="ghost" onClick={() => loadText(sampleDxf(), "ornek-ada.dxf")}>
-              Örnek ada yükle
+          {/* HIZLI EYLEMLER */}
+          <div className="mb-3 space-y-2 rounded-lg border border-border/70 bg-background/40 p-2.5">
+            <div className="grid grid-cols-2 gap-2">
+              <Btn small onClick={() => fileRef.current?.click()}>
+                <Upload /> DXF Yükle
+              </Btn>
+              <Btn small variant="ghost" onClick={() => loadText(sampleDxf(), "ornek-ada.dxf")}>
+                <FileText /> Örnek Ada
+              </Btn>
+            </div>
+            <Btn onClick={() => compute(false)} disabled={busy || !adaRings.length}>
+              <Play /> {busy ? "Hesaplanıyor…" : "Parselasyonu Hesapla"}
             </Btn>
-          </Section>
+            <div className="grid grid-cols-2 gap-2">
+              <Btn small variant="ghost" onClick={() => compute(true)} disabled={busy || adaRings.length < 2}>
+                <Layers /> Tüm adalar ({adaRings.length})
+              </Btn>
+              <Btn small variant="ghost" onClick={() => compute(false, variant + 1)} disabled={busy || !results.length}>
+                <RefreshCw /> Alternatif{variant > 0 ? ` #${variant}` : ""}
+              </Btn>
+            </div>
+          </div>
 
-          <Section title="Katman Seçimi">
-            <Field label="Ada katmanı">
-              <select
-                value={adaLayer}
-                onChange={(e) => setAdaLayer(e.target.value)}
-                className="w-full rounded border border-input bg-background px-2 py-1 font-mono text-xs"
-              >
-                {(doc?.layers ?? ["ADA"]).map((l) => (
-                  <option key={l} value={l}>
-                    {l}
-                  </option>
+          <Accordion
+            type="multiple"
+            defaultValue={["katman", "parametre"]}
+            className="space-y-2"
+          >
+            <PanelItem value="katman" icon={<Layers className="size-3.5" />} title="Katman Seçimi">
+              <Field label="Ada katmanı">
+                <Sel value={adaLayer} onChange={setAdaLayer}>
+                  {(doc?.layers ?? ["ADA"]).map((l) => (
+                    <option key={l} value={l}>
+                      {l}
+                    </option>
+                  ))}
+                </Sel>
+              </Field>
+              <Field label="Yapı inşaat hattı">
+                <Sel value={hatLayer} onChange={setHatLayer}>
+                  {(doc?.layers ?? ["YAPI_INSAA_HATTI"]).map((l) => (
+                    <option key={l} value={l}>
+                      {l}
+                    </option>
+                  ))}
+                </Sel>
+              </Field>
+              <p className="font-mono text-[10px] leading-relaxed text-muted-foreground">
+                {adaRings.length} ada · DXF hat katmanında {buildingLines.length} nesne · hesaplanan{" "}
+                {exactBuildingLines.length} adet tam {params.frontSetback.toFixed(2)} m paralel yapı hattı
+              </p>
+              <div className="space-y-1.5 pt-1">
+                {LAYER_KEYS.map((k) => (
+                  <Toggle
+                    key={k}
+                    label={LAYER_LABELS[k]}
+                    checked={layers[k]}
+                    onChange={(c) => setLayers({ ...layers, [k]: c })}
+                  />
                 ))}
-              </select>
-            </Field>
-            <Field label="Yapı inşaat hattı">
-              <select
-                value={hatLayer}
-                onChange={(e) => setHatLayer(e.target.value)}
-                className="w-full rounded border border-input bg-background px-2 py-1 font-mono text-xs"
-              >
-                {(doc?.layers ?? ["YAPI_INSAA_HATTI"]).map((l) => (
-                  <option key={l} value={l}>
-                    {l}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <p className="mt-1 font-mono text-[11px] text-muted-foreground">
-              {adaRings.length} ada · DXF hat katmanında {buildingLines.length} nesne · hesaplanan{" "}
-              {exactBuildingLines.length} adet tam {params.frontSetback.toFixed(2)} m paralel yapı hattı (içbükey
-              köşelerde de doğru ofset)
-            </p>
-          </Section>
+              </div>
+            </PanelItem>
 
-          <Section title="Parametreler">
-            <div className="grid gap-2 sm:grid-cols-2">
-              <div className="rounded-lg border border-sky-500/40 bg-sky-500/5 p-2">
-                <div className="mb-2 flex items-center gap-2">
-                  <span className="h-2 w-2 rounded-full bg-sky-400" />
-                  <span className="font-mono text-[10px] uppercase tracking-wider text-sky-300">Parsel verileri</span>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
+            <PanelItem value="parametre" icon={<SlidersHorizontal className="size-3.5" />} title="Parametreler">
+              <Tabs defaultValue="parsel">
+                <TabsList className="grid w-full grid-cols-2">
+                  <TabsTrigger value="parsel" className="font-mono text-[10px] uppercase tracking-wider">
+                    Parsel
+                  </TabsTrigger>
+                  <TabsTrigger value="yapi" className="font-mono text-[10px] uppercase tracking-wider">
+                    Yapı
+                  </TabsTrigger>
+                </TabsList>
+                <TabsContent value="parsel" className="mt-3 grid grid-cols-2 gap-2">
                   <Num tone="blue" label="Min parsel (m²)" v={params.minArea} set={(v) => setParams({ ...params, minArea: v })} />
                   <Num tone="blue" label="Max parsel (m²)" v={params.maxArea} set={(v) => setParams({ ...params, maxArea: v })} />
                   <Num tone="blue" label="Ara cephe (m)" v={params.midFront} set={(v) => setParams({ ...params, midFront: v })} />
@@ -282,15 +343,8 @@ function Index() {
                     v={params.tolerance}
                     set={(v) => setParams({ ...params, tolerance: v })}
                   />
-                </div>
-              </div>
-
-              <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/5 p-2">
-                <div className="mb-2 flex items-center gap-2">
-                  <span className="h-2 w-2 rounded-full bg-emerald-400" />
-                  <span className="font-mono text-[10px] uppercase tracking-wider text-emerald-300">Yapı kuralları</span>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
+                </TabsContent>
+                <TabsContent value="yapi" className="mt-3 grid grid-cols-2 gap-2">
                   <Num tone="green" label="Ön çekme (m)" v={params.frontSetback} set={(v) => setParams({ ...params, frontSetback: v })} />
                   <Num tone="green" label="Yan çekme (m)" v={params.sideSetback} set={(v) => setParams({ ...params, sideSetback: v })} />
                   <Num tone="green" label="Arka çekme (m)" v={params.rearSetback} set={(v) => setParams({ ...params, rearSetback: v })} />
@@ -313,178 +367,134 @@ function Index() {
                     set={(v) => setParams({ ...params, minBuildingDepth: v })}
                   />
                   <Num tone="green" label="TAKS" step={0.01} v={params.taks} set={(v) => setParams({ ...params, taks: v })} />
-                </div>
-              </div>
-            </div>
-          </Section>
+                </TabsContent>
+              </Tabs>
+            </PanelItem>
 
-
-          <Section title="Hesaplama">
-            <Btn onClick={() => compute(false)} disabled={busy || !adaRings.length}>
-              {busy ? "Hesaplanıyor…" : "Parselasyonu Hesapla (ADA 1)"}
-            </Btn>
-            <Btn variant="ghost" onClick={() => compute(true)} disabled={busy || adaRings.length < 2}>
-              Tüm adaları hesapla ({adaRings.length})
-            </Btn>
-            <Btn
-              variant="ghost"
-              onClick={() => compute(false, variant + 1)}
-              disabled={busy || !results.length}
-            >
-              ⟳ Alternatif parselasyon üret{variant > 0 ? ` (#${variant})` : ""}
-            </Btn>
-          </Section>
-
-          <Section title="Katmanlar">
-            {LAYER_KEYS.map((k) => (
-              <label key={k} className="flex cursor-pointer items-center gap-2 py-1 text-xs">
-                <input
-                  type="checkbox"
-                  checked={layers[k]}
-                  onChange={(e) => setLayers({ ...layers, [k]: e.target.checked })}
-                  className="size-4 accent-primary"
-                />
-                {LAYER_LABELS[k]}
-              </label>
-            ))}
-          </Section>
-
-          <Section title="Harita Altlığı (Google)">
-            <label className="flex cursor-pointer items-center gap-2 py-1 text-xs">
-              <input
-                type="checkbox"
+            <PanelItem value="altlik" icon={<MapIcon className="size-3.5" />} title="Harita Altlığı">
+              <Toggle
+                label="Altlığı göster"
                 checked={basemap.enabled}
-                onChange={(e) => setBasemap({ ...basemap, enabled: e.target.checked })}
-                className="size-4 accent-primary"
+                onChange={(c) => setBasemap({ ...basemap, enabled: c })}
               />
-              Altlığı göster
-            </label>
-            <Field label="Altlık tipi">
-              <select
-                value={basemap.type}
-                onChange={(e) => setBasemap({ ...basemap, type: e.target.value as BasemapConfig["type"] })}
-                className="w-full rounded-md border border-input bg-background px-2 py-1.5 font-mono text-xs"
-              >
-                <option value="hybrid">Uydu + etiket</option>
-                <option value="satellite">Uydu</option>
-                <option value="street">Sokak haritası</option>
-              </select>
-            </Field>
-            <Field label="Koordinat sistemi (DXF)">
-              <select
-                value={crs}
-                onChange={(e) => {
-                  setCrs(e.target.value);
-                  georeference(adaRings, e.target.value);
+              <Field label="Altlık tipi">
+                <Sel value={basemap.type} onChange={(v) => setBasemap({ ...basemap, type: v as BasemapConfig["type"] })}>
+                  <option value="hybrid">Uydu + etiket</option>
+                  <option value="satellite">Uydu</option>
+                  <option value="street">Sokak haritası</option>
+                </Sel>
+              </Field>
+              <Field label="Koordinat sistemi (DXF)">
+                <Sel
+                  value={crs}
+                  onChange={(v) => {
+                    setCrs(v);
+                    georeference(adaRings, v);
+                  }}
+                >
+                  {TM_PRESETS.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.label}
+                    </option>
+                  ))}
+                </Sel>
+              </Field>
+              <Btn small variant="ghost" disabled={!adaRings.length} onClick={() => georeference(adaRings)}>
+                <Crosshair /> DXF koordinatından konumla
+              </Btn>
+              <div className="grid grid-cols-2 gap-2">
+                <Num label="Enlem (merkez)" step={0.0001} v={basemap.lat} set={(v) => setBasemap({ ...basemap, lat: v, refX: undefined, refY: undefined })} />
+                <Num label="Boylam (merkez)" step={0.0001} v={basemap.lon} set={(v) => setBasemap({ ...basemap, lon: v, refX: undefined, refY: undefined })} />
+              </div>
+              <Field label={`Altlık opaklığı · ${Math.round(basemap.opacity * 100)}%`}>
+                <Slider
+                  min={0.2}
+                  max={1}
+                  step={0.05}
+                  value={[basemap.opacity]}
+                  onValueChange={([v]: number[]) => setBasemap({ ...basemap, opacity: v })}
+                  className="py-1.5"
+                />
+              </Field>
+              <p className="text-[10px] leading-relaxed text-muted-foreground">
+                DXF projeksiyon koordinatlı (TM/UTM) ise dilim seçilip otomatik konumlanır. Yerel koordinatlarda
+                enlem/boylam elle girilebilir.
+              </p>
+            </PanelItem>
+
+            <PanelItem value="export" icon={<Download className="size-3.5" />} title="Dışa Aktar">
+              <div className="grid grid-cols-2 gap-2">
+                <Btn
+                  small
+                  variant="ghost"
+                  disabled={!results.length}
+                  onClick={() => download("parselasyon.dxf", exportDXF(results, exactBuildingLines), "application/dxf")}
+                >
+                  DXF
+                </Btn>
+                <Btn
+                  small
+                  variant="ghost"
+                  disabled={!results.length}
+                  onClick={() =>
+                    download("parselasyon.geojson", exportGeoJSON(results, exactBuildingLines), "application/geo+json")
+                  }
+                >
+                  GeoJSON
+                </Btn>
+                <Btn small variant="ghost" disabled={!results.length} onClick={() => download("parsel-raporu.csv", exportCSV(results), "text/csv")}>
+                  CSV
+                </Btn>
+                <Btn
+                  small
+                  variant="ghost"
+                  disabled={!results.length}
+                  onClick={() => download("parselasyon-paket.json", exportPackage(results, exactBuildingLines), "application/json")}
+                >
+                  Paket
+                </Btn>
+                <Btn
+                  small
+                  variant="ghost"
+                  disabled={!results.length}
+                  onClick={() => {
+                    if (!openReportPdf(results, params, fileName || "parselasyon"))
+                      setNotice("Rapor penceresi açılamadı. Tarayıcı açılır pencere iznini kontrol edin.");
+                  }}
+                >
+                  PDF Rapor
+                </Btn>
+                <Btn
+                  small
+                  variant="ghost"
+                  disabled={!results.length}
+                  onClick={() => download("denetim-raporu.csv", exportAuditCSV(results, params), "text/csv")}
+                >
+                  Denetim CSV
+                </Btn>
+              </div>
+              <Btn
+                disabled={!results.length || zipping}
+                onClick={async () => {
+                  setZipping(true);
+                  try {
+                    await downloadZip(results, exactBuildingLines, params, (fileName || "parselasyon").replace(/\.dxf$/i, ""));
+                  } catch (e) {
+                    setNotice("ZIP oluşturulamadı: " + (e as Error).message);
+                  } finally {
+                    setZipping(false);
+                  }
                 }}
-                className="w-full rounded-md border border-input bg-background px-2 py-1.5 font-mono text-xs"
               >
-                {TM_PRESETS.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.label}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Btn small variant="ghost" disabled={!adaRings.length} onClick={() => georeference(adaRings)}>
-              DXF koordinatından otomatik konumla
-            </Btn>
-            <div className="grid grid-cols-2 gap-2">
-              <Num label="Enlem (merkez)" step={0.0001} v={basemap.lat} set={(v) => setBasemap({ ...basemap, lat: v, refX: undefined, refY: undefined })} />
-              <Num label="Boylam (merkez)" step={0.0001} v={basemap.lon} set={(v) => setBasemap({ ...basemap, lon: v, refX: undefined, refY: undefined })} />
-            </div>
-            <Field label={`Altlık opaklığı · ${Math.round(basemap.opacity * 100)}%`}>
-              <input
-                type="range"
-                min={0.2}
-                max={1}
-                step={0.05}
-                value={basemap.opacity}
-                onChange={(e) => setBasemap({ ...basemap, opacity: Number(e.target.value) })}
-                className="w-full accent-primary"
-              />
-            </Field>
-            <p className="text-[11px] leading-relaxed text-muted-foreground">
-              DXF projeksiyon koordinatlı (TM/UTM) ise dilim seçilip otomatik konumlanır. Dilim önekli koordinatlar
-              (ör. 36xxxxx) kendiliğinden algılanır. Yerel koordinatlarda enlem/boylam elle girilebilir.
-            </p>
-          </Section>
-
-
-          <Section title="Dışa Aktar">
-            <div className="grid grid-cols-2 gap-2">
-              <Btn
-                small
-                disabled={!results.length}
-                onClick={() => download("parselasyon.dxf", exportDXF(results, exactBuildingLines), "application/dxf")}
-              >
-                DXF
+                <Download /> {zipping ? "ZIP hazırlanıyor…" : "Tümünü ZIP indir"}
               </Btn>
-              <Btn
-                small
-                disabled={!results.length}
-                onClick={() =>
-                  download("parselasyon.geojson", exportGeoJSON(results, exactBuildingLines), "application/geo+json")
-                }
-              >
-                GeoJSON
-              </Btn>
-              <Btn small disabled={!results.length} onClick={() => download("parsel-raporu.csv", exportCSV(results), "text/csv")}>
-                CSV
-              </Btn>
-              <Btn
-                small
-                disabled={!results.length}
-                onClick={() => download("parselasyon-paket.json", exportPackage(results, exactBuildingLines), "application/json")}
-              >
-                Paket
-              </Btn>
-              <Btn
-                small
-                disabled={!results.length}
-                onClick={() => {
-                  if (!openReportPdf(results, params, fileName || "parselasyon"))
-                    setNotice("Rapor penceresi açılamadı. Tarayıcı açılır pencere iznini kontrol edin.");
-                }}
-              >
-                PDF Rapor
-              </Btn>
-              <Btn
-                small
-                disabled={!results.length}
-                onClick={() =>
-                  download(
-                    "denetim-raporu.csv",
-                    exportAuditCSV(results, params),
-                    "text/csv",
-                  )
-                }
-              >
-                Denetim CSV
-              </Btn>
-            </div>
-            <Btn
-              disabled={!results.length || zipping}
-              onClick={async () => {
-                setZipping(true);
-                try {
-                  await downloadZip(results, exactBuildingLines, params, (fileName || "parselasyon").replace(/\.dxf$/i, ""));
-                } catch (e) {
-                  setNotice("ZIP oluşturulamadı: " + (e as Error).message);
-                } finally {
-                  setZipping(false);
-                }
-              }}
-            >
-              {zipping ? "ZIP hazırlanıyor…" : "⬇ Tümünü ZIP indir"}
-            </Btn>
-            <p className="text-[11px] leading-relaxed text-muted-foreground">
-              PDF Rapor; özet, kural seti, parsel listesi ve her geçersiz parsel için hangi kuralın neden sağlanmadığını
-              adım adım gösteren denetim bölümünü içerir (yazdır ekranında "PDF olarak kaydet").
-            </p>
-          </Section>
-
+              <p className="text-[10px] leading-relaxed text-muted-foreground">
+                PDF Rapor; özet, kural seti, parsel listesi ve her geçersiz parsel için denetim bölümünü içerir.
+              </p>
+            </PanelItem>
+          </Accordion>
         </aside>
+
 
         {/* SOL PANEL GENİŞLİK TUTAMACI */}
         <div
@@ -700,9 +710,29 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="mb-1 block font-mono text-[10px] uppercase tracking-wider text-muted-foreground">{label}</span>
+      <span className="mb-1.5 block font-mono text-[10px] uppercase tracking-wider text-muted-foreground">{label}</span>
       {children}
     </label>
+  );
+}
+
+function Sel({
+  value,
+  onChange,
+  children,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="h-8 w-full cursor-pointer rounded-md border border-input bg-background px-2 font-mono text-xs text-foreground shadow-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring"
+    >
+      {children}
+    </select>
   );
 }
 
@@ -719,25 +749,39 @@ function Num({
   step?: number;
   tone?: "blue" | "green";
 }) {
-  const cls =
-    tone === "blue"
-      ? "border-sky-500/40 bg-sky-500/10 text-sky-100 focus:border-sky-400"
-      : tone === "green"
-        ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-100 focus:border-emerald-400"
-        : "border-input bg-background";
   return (
     <Field label={label}>
-      <input
+      <Input
         type="number"
         step={step}
         value={v}
         onChange={(e) => set(Number(e.target.value))}
-        className={`w-full rounded border px-2 py-1 font-mono text-xs outline-none ${cls}`}
+        className={cn(
+          "h-8 bg-background/60 px-2 font-mono text-xs tabular-nums",
+          tone === "blue" && "border-primary/30 focus-visible:border-primary",
+          tone === "green" && "border-accent-foreground/20",
+        )}
       />
     </Field>
   );
 }
 
+function Toggle({
+  checked,
+  onChange,
+  label,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  label: string;
+}) {
+  return (
+    <label className="flex cursor-pointer items-center justify-between gap-2 rounded-md border border-border/60 bg-background/40 px-2.5 py-1.5 text-xs transition-colors hover:border-primary/40">
+      <span className="text-foreground/90">{label}</span>
+      <Switch checked={checked} onCheckedChange={onChange} />
+    </label>
+  );
+}
 
 function Btn({
   children,
@@ -753,21 +797,21 @@ function Btn({
   small?: boolean;
 }) {
   return (
-    <button
+    <Button
       onClick={onClick}
       disabled={disabled}
-      className={`w-full rounded-md font-mono uppercase tracking-wider transition-colors disabled:opacity-40 ${
-        small ? "px-2 py-1.5 text-[10px]" : "px-3 py-2 text-[11px]"
-      } ${
-        variant === "solid"
-          ? "bg-primary text-primary-foreground hover:bg-primary/90"
-          : "border border-border bg-transparent text-foreground hover:bg-accent"
-      }`}
+      size={small ? "sm" : "default"}
+      variant={variant === "solid" ? "default" : "outline"}
+      className={cn(
+        "w-full font-mono font-medium uppercase tracking-wider",
+        small ? "h-8 text-[10px]" : "h-9 text-[11px]",
+      )}
     >
       {children}
-    </button>
+    </Button>
   );
 }
+
 
 function Row({ k, v, tone }: { k: string; v: string; tone?: "ok" | "bad" }) {
   return (
