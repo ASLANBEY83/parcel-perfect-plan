@@ -219,7 +219,7 @@ function classifyEdge(a: Pt, b: Pt, frontLines: Pt[][], roadFrontages: Pt[][]): 
  * kullanıcının girdiği runtime çekme mesafesi uygulanır:
  * yol cephesi → frontSetback, yan kenar → sideSetback, arka kenar → rearSetback.
  */
-function buildEnvelope(ring: Ring, frontLines: Pt[][], p: Params, roadFrontages: Pt[][] = []): Ring {
+export function buildEnvelope(ring: Ring, frontLines: Pt[][], p: Params, roadFrontages: Pt[][] = []): Ring {
   const r = ensureCCW(ring);
   return clipInset(r, (i) => {
     const a = r[i];
