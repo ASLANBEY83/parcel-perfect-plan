@@ -15,7 +15,7 @@ export type WorkerRequest = {
 
 export type WorkerResponse =
   | { type: "progress"; jobId: number; done: number; total: number }
-  | { type: "block"; jobId: number; index: number; result: BlockResult; debug?: BlockDebug }
+  | { type: "block"; jobId: number; index: number; result: BlockResult; debug?: BlockDebug | undefined }
   | { type: "done"; jobId: number; results: BlockResult[] }
   | { type: "error"; jobId: number; message: string };
 
