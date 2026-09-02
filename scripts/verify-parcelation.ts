@@ -180,3 +180,14 @@ writeFileSync(path, JSON.stringify(toGeoJSON([
   { name: "C", block: C.block },
 ]), null, 1));
 console.log("\nGeoJSON yazıldı:", path);
+
+// --- TEST C detay teşhisi ---
+console.log("\n=== TEST C PARSEL DETAY ===");
+for (const p of C.block.parcels) {
+  console.log(
+    `#${p.no} row${p.row} corner=${p.corner} alan=${f(p.area)} cephe=${f(p.frontage)} derinlik=${f(p.depth)} ` +
+      `zarf=${p.envelope ? f(Math.abs(ringArea(p.envelope))) : "yok"} blok=${p.building ? f(p.buildingArea) : "yok"} ` +
+      `yapıCephe=${f(p.buildingFront)} yapıDerinlik=${f(p.buildingDepth)} taks=${f(p.taksValue, 3)} valid=${p.valid} :: ${p.issues.join(" | ")}`,
+  );
+}
+console.log("gerekli min derinlik (on+arka+minBuildingDepth):", 6 + 7 + defaultParams.minBuildingDepth);
