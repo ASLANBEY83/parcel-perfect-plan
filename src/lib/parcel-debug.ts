@@ -70,6 +70,10 @@ const perimeter = (r: Ring) => r.reduce((s, pt, i) => s + dist(pt, r[(i + 1) % r
 /** Red nedenlerini normalize eder (sayısal değerleri atarak gruplar). */
 function reasonKey(issue: string): string {
   const s = issue.replace(/^[^A-Za-zÇĞİÖŞÜçğıöşü]+/, "").trim();
+  if (/minimum değerin altında/i.test(s)) return "alan (min parsel alanı altı)";
+  if (/maksimum değerin üzerinde/i.test(s)) return "alan (max parsel alanı üstü)";
+  if (/Yapılaşabilir minimum derinlik/i.test(s)) return "yapılaşabilir derinlik yetersiz";
+  if (/kalan yapı alanı/i.test(s)) return "çekme sonrası yapı alanı yetersiz";
   if (/^Alan/i.test(s)) return "alan (min parsel alanı altı)";
   if (/Cephe|cephe/.test(s) && /Yapı/i.test(s)) return "yapı cephesi";
   if (/^Cephe/i.test(s)) return "parsel cephesi (ara/köşe cephe altı)";
