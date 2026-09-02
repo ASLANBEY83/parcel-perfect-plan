@@ -30,6 +30,12 @@ import {
   type Pt,
   type Ring,
 } from "./geo";
+import {
+  EDGE_CLASSIFICATION,
+  FRONTAGE_DETECTION,
+  ROAD_BAND,
+  SOLUTION_SCORE_WEIGHTS,
+} from "./parcelation-config";
 
 export interface Params {
   minArea: number;
@@ -119,7 +125,7 @@ function pieceBetween(ring: Ring, a: CutDef | null, b: CutDef | null, tangent: P
 function equalAreaChainages(ring: Ring, line: Pt[], n: number, wStart = 1, wEnd = 1): number[] {
   const L = polylineLength(line);
   const total = ringArea(ring);
-  const steps = 240;
+  const steps = EQUAL_AREA_SAMPLE_STEPS;
   const cum: { s: number; a: number }[] = [];
   for (let i = 0; i <= steps; i++) {
     const s = (L * i) / steps;
@@ -738,11 +744,11 @@ export function detectRoadFrontages(ring: Ring): Pt[][] {
     const a = f[i];
     const b = f[(i + 1) % r.length];
     const dir = norm([b[0] - a[0], b[1] - a[1]]);
-    const alongU = Math.abs(dir[0]) > Math.cos((45 * Math.PI) / 180);
+    const alongU = Math.abs(dir[0]) > Math.cos((ROAD_BAND.ROAD_BAND_ANGLE_DEG * Math.PI) / 180);
     if (!alongU) continue;
     const mv = (a[1] + b[1]) / 2;
-    if (mv < bb.minY + 0.3 * H) bandA.push(i);
-    else if (mv > bb.maxY - 0.3 * H) bandB.push(i);
+    if (mv < bb.minY + ROAD_BAND.ROAD_BAND_RATIO * H) bandA.push(i);
+    else if (mv > bb.maxY - ROAD_BAND.ROAD_BAND_RATIO * H) bandB.push(i);
   }
   const chainOf = (idxs: number[]): Pt[] => {
     const pts: { u: number; p: Pt }[] = [];
@@ -757,7 +763,7 @@ export function detectRoadFrontages(ring: Ring): Pt[][] {
   };
   const A = bandA.length ? chainOf(bandA) : [];
   const B = bandB.length ? chainOf(bandB) : [];
-  return [A, B].filter((l) => l.length >= 2 && polylineLength(l) > 5);
+  return [A, B].filter((l) => l.length >= 2 && polylineLength(l) > ROAD_BAND.MIN_FRONTAGE_LENGTH);
 }
 
 // -------------------- ana optimizasyon --------------------
@@ -794,7 +800,7 @@ function buildRowParcels(
     ring = simplifyRing(ring);
     const area = ringArea(ring);
     const frontage = edgeLengthOnLines(ring, allFrontages);
-    const envelope = buildEnvelope(ring, roadLines, p);
+    const envelope = buildEnvelope(ring, roadLines, p, allFrontages);
     const corner = i === 0 || i === n - 1;
     const bld = envelope.length >= 3
       ? makeBuilding(ring, envelope, frontLine, buildingLines, area, p, corner, roadLines)
@@ -863,16 +869,17 @@ function scoreSolution(parcels: Parcel[], p: Params, tolUsed: number): number {
   const bldSd = stddev(valid.map((x) => x.buildingArea));
   // Maksimum alan aşımı yasak değil, sadece hafif cezalandırılır.
   const overflow = parcels.reduce((s, x) => s + Math.max(0, x.area - p.maxArea), 0);
+  const W = SOLUTION_SCORE_WEIGHTS;
   return (
-    cornerValidCount(parcels) * 40000 +
-    valid.length * 10000 +
-    parcels.filter((x) => x.building).length * 500 +
-    inRange * 60 -
-    overflow * 1.5 -
+    cornerValidCount(parcels) * W.CORNER_VALID +
+    valid.length * W.VALID_PARCEL +
+    parcels.filter((x) => x.building).length * W.HAS_BUILDING +
+    inRange * W.AREA_IN_RANGE -
+    overflow * W.AREA_OVERFLOW_PENALTY -
     // Parsel yüzölçümleri mümkün olduğunca eşit olsun.
-    areaSpread(parcels) * 20000 -
-    bldSd * 3 -
-    tolUsed * 2
+    areaSpread(parcels) * W.AREA_SPREAD_PENALTY -
+    bldSd * W.BUILDING_AREA_SD_PENALTY -
+    tolUsed * W.TOLERANCE_USED_PENALTY
   );
 }
 
@@ -1082,7 +1089,7 @@ export function optimizeBlock(
   const frontages = opts.manualFrontages?.length ? opts.manualFrontages : detectRoadFrontages(ring);
   log.push(`${frontages.length} yol cephesi belirlendi.`);
 
-  // Ada sınırlarının tamamı yola cephelidir: her ada kenarından 5 m ön çekme uygulanır.
+  // Ada sınırlarının tamamı yola cephelidir: her ada kenarından frontSetback kadar ön çekme uygulanır.
   const roadLines: Pt[][] = [[...ring, ring[0]]];
 
   const blockMp: MultiPoly = [[ring]];
@@ -1251,7 +1258,9 @@ export function optimizeBlock(
       solutions = best.sols;
       splitMid = best.mid;
       log.push("Karşılıklı iki yol cephesine göre sırt sırta iki parsel sırası oluşturuldu.");
-      log.push("Ada'nın her kenarı yola cepheli kabul edildi; tüm kenarlardan 5 m yapı yaklaşma mesafesi uygulandı.");
+      log.push(
+        `Ada'nın her kenarı yola cepheli kabul edildi; yol cephelerinden ${p.frontSetback} m, yan sınırlardan ${p.sideSetback} m, arka sınırlardan ${p.rearSetback} m yapı yaklaşma mesafesi uygulandı.`,
+      );
       log.push("Sıra derinliği ve köşe parsel genişlikleri, geçerli parsel sayısı en yüksek olacak şekilde optimize edildi.");
       log.push(...best.log);
     }
