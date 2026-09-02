@@ -1,0 +1,783 @@
+import { createFileRoute } from "@tanstack/react-router";
+import { useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { PlanViewer, type BasemapConfig, type LayerVisibility } from "@/components/PlanViewer";
+import { linesOfLayer, parseDxf, polygonsOfLayer, type DxfDoc } from "@/lib/dxf";
+import type { Pt, Ring } from "@/lib/geo";
+import { insetRing, offsetRingInward, ringArea } from "@/lib/geo";
+import { defaultParams, optimizeBlock, summarize, type BlockResult, type Params, type Parcel } from "@/lib/parcelation";
+import { download, downloadZip, exportAuditCSV, exportCSV, exportDXF, exportGeoJSON, exportPackage } from "@/lib/exporters";
+import { openReportPdf } from "@/lib/report";
+import { sampleDxf } from "@/lib/sample";
+import { TM_PRESETS, guessTM, tmToLonLat } from "@/lib/basemap";
+
+export const Route = createFileRoute("/")({
+  head: () => ({
+    meta: [
+      { title: "Parselasyon Optimizasyon | İmar Adası Parsel ve Yapı Analizi" },
+      {
+        name: "description",
+        content:
+          "DXF imar adalarını gerçek geometriyle analiz eden, 290-330 m² parsel ve yapılaşma kurallarını sağlayan maksimum sayıda geçerli parsel üreten teknik uygulama.",
+      },
+      { property: "og:title", content: "Parselasyon Optimizasyon Uygulaması" },
+      {
+        property: "og:description",
+        content: "İmar adası DXF yükleyin; kurallara uygun maksimum geçerli parsel ve yapı bloğu çözümünü üretin.",
+      },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary_large_image" },
+    ],
+  }),
+  component: Index,
+});
+
+const LAYER_KEYS: (keyof LayerVisibility)[] = ["ADA", "PARSELLER", "YAPI_INSAA_HATTI", "YAPI_BLOKLARI"];
+const LAYER_LABELS: Record<keyof LayerVisibility, string> = {
+  ADA: "Ada sınırı",
+  PARSELLER: "Parseller",
+  YAPI_INSAA_HATTI: "Yapı inşaat hattı",
+  YAPI_BLOKLARI: "Yapı blokları",
+};
+
+function Index() {
+  const [doc, setDoc] = useState<DxfDoc | null>(null);
+  const [fileName, setFileName] = useState<string>("");
+  const [adaLayer, setAdaLayer] = useState("ADA");
+  const [hatLayer, setHatLayer] = useState("YAPI_INSAA_HATTI");
+  const [params, setParams] = useState<Params>(defaultParams);
+  const [results, setResults] = useState<BlockResult[]>([]);
+  const [selected, setSelected] = useState<{ block: BlockResult; parcel: Parcel } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [variant, setVariant] = useState(0);
+  const [zipping, setZipping] = useState(false);
+  const [activeBlock, setActiveBlock] = useState(0);
+  const [tab, setTab] = useState<"ayarlar" | "harita" | "sonuc">("harita");
+  const [leftW, setLeftW] = useState(380);
+  const startLeftResize = (e: ReactPointerEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = leftW;
+    const move = (ev: PointerEvent) => setLeftW(Math.min(640, Math.max(280, startW + ev.clientX - startX)));
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+
+  const [basemap, setBasemap] = useState<BasemapConfig>({
+    enabled: false,
+    type: "hybrid",
+    lat: 39.925,
+    lon: 32.8365,
+    opacity: 0.85,
+  });
+  const [crs, setCrs] = useState<string>("tm3-33");
+  const [layers, setLayers] = useState<LayerVisibility>({
+    ADA: true,
+    PARSELLER: true,
+    YAPI_INSAA_HATTI: true,
+    YAPI_BLOKLARI: true,
+  });
+  const fileRef = useRef<HTMLInputElement>(null);
+
+
+  const adaRings: Ring[] = useMemo(() => (doc ? polygonsOfLayer(doc, adaLayer) : []), [doc, adaLayer]);
+  const buildingLines: Pt[][] = useMemo(() => (doc ? linesOfLayer(doc, hatLayer) : []), [doc, hatLayer]);
+  const exactBuildingLines: Pt[][] = useMemo(
+    () =>
+      adaRings
+        .flatMap((ring) => {
+          const off = offsetRingInward(ring, params.frontSetback);
+          const rings = off.length ? off : [insetRing(ring, () => params.frontSetback)];
+          return rings.filter((r) => r.length >= 3).map((r) => [...r, r[0]] as Pt[]);
+        }),
+    [adaRings, params.frontSetback],
+  );
+
+  /** DXF proje koordinatlarını (TM/UTM) enlem-boylama çevirip altlığı hizalar. */
+  function georeference(rings: Ring[], presetId = crs) {
+    const pts = rings.flat();
+    if (!pts.length) return;
+    const cx = pts.reduce((a, p) => a + p[0], 0) / pts.length;
+    const cy = pts.reduce((a, p) => a + p[1], 0) / pts.length;
+    const guessed = guessTM(cx);
+    const def = guessed?.def ?? TM_PRESETS.find((p) => p.id === presetId)?.def;
+    if (!def) return;
+    if (guessed) setCrs(guessed.presetId);
+    // dilim önekli koordinatlarda enlem/boylam doğrudan; değilse seçili dilim kullanılır
+    if (cy < 1_000_000 || cy > 10_000_000) return;
+    const { lat, lon } = tmToLonLat(cx, cy, def);
+    if (!isFinite(lat) || !isFinite(lon) || Math.abs(lat) > 85) return;
+    setBasemap((b) => ({ ...b, lat, lon, refX: cx, refY: cy }));
+  }
+
+  function loadText(text: string, name: string) {
+    try {
+      const d = parseDxf(text);
+      setDoc(d);
+      setFileName(name);
+      setResults([]);
+      setSelected(null);
+      const guessAda = d.layers.find((l) => /ada/i.test(l)) ?? d.layers[0] ?? "ADA";
+      // Türkçe büyük/küçük harf (İ/I/ş) farkları ve yaygın adlandırmalar için normalize edilmiş arama
+      const nrm = (s: string) =>
+        s
+          .toLocaleLowerCase("tr")
+          .replace(/[ıİ]/g, "i")
+          .replace(/[şŞ]/g, "s")
+          .replace(/[çÇ]/g, "c")
+          .replace(/[ğĞ]/g, "g")
+          .replace(/[üÜ]/g, "u")
+          .replace(/[öÖ]/g, "o");
+      const guessHat =
+        d.layers.find((l) => /insa|cekme|yaklasma|yapi_?ins|imar_?hat/.test(nrm(l))) ?? "YAPI_INSAA_HATTI";
+      setAdaLayer(guessAda);
+      setHatLayer(guessHat);
+      georeference(polygonsOfLayer(d, guessAda));
+      setNotice(`${name} okundu. ${d.layers.length} katman bulundu.`);
+    } catch (err) {
+      setNotice("DXF okunamadı: " + (err as Error).message);
+    }
+  }
+
+  function onFile(f: File) {
+    if (/\.dwg$/i.test(f.name)) {
+      setNotice(
+        "DWG dosyaları tarayıcıda okunamaz. Lütfen dosyayı CAD yazılımınızda DXF (ASCII) formatına dönüştürüp yeniden yükleyin.",
+      );
+      return;
+    }
+    const r = new FileReader();
+    r.onload = () => loadText(String(r.result), f.name);
+    r.readAsText(f);
+  }
+
+  function compute(all: boolean, variant = 0) {
+    if (!adaRings.length) {
+      setNotice("Seçilen katmanda kapalı ada poligonu bulunamadı.");
+      return;
+    }
+    setBusy(true);
+    setVariant(variant);
+    setTimeout(() => {
+      try {
+        const target = all ? adaRings : adaRings.slice(0, 1);
+        const out = target.map((r, i) =>
+          optimizeBlock(r, exactBuildingLines, params, { id: `ada-${i + 1}`, name: `ADA ${i + 1}`, variant }),
+        );
+        setResults(out);
+        setActiveBlock(0);
+        setSelected(null);
+        setNotice(variant > 0 ? `Alternatif parselasyon #${variant} üretildi.` : null);
+
+      } catch (err) {
+        setNotice("Hesaplama hatası: " + (err as Error).message);
+      } finally {
+        setBusy(false);
+      }
+    }, 30);
+  }
+
+  const sum = summarize(results);
+  const active = results[activeBlock];
+
+  return (
+    <div className="flex h-dvh flex-col bg-background text-foreground">
+      <header className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-panel/80 px-4 py-2.5 backdrop-blur">
+        <div className="flex items-center gap-3">
+          <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 font-mono text-xs font-bold text-primary">
+            PO
+          </span>
+          <div>
+            <h1 className="font-mono text-[13px] font-semibold uppercase tracking-[0.18em] text-primary">
+              Parselasyon Optimizasyon
+            </h1>
+            <p className="hidden text-[11px] text-muted-foreground sm:block">
+              İmar adası geometrisini koruyarak maksimum geçerli parsel + yapı çözümü
+            </p>
+          </div>
+        </div>
+        <div className="truncate rounded-full border border-border px-3 py-1 font-mono text-[10px] text-muted-foreground">
+          {fileName || "dosya yok"}
+        </div>
+      </header>
+
+
+      <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
+        {/* SOL PANEL */}
+        <aside
+          style={{ ["--panel-w" as string]: `${leftW}px` }}
+          className={`min-h-0 w-full shrink-0 overflow-y-auto bg-panel p-4 lg:block lg:w-[var(--panel-w)] lg:border-r lg:border-border ${
+            tab === "ayarlar" ? "block flex-1" : "hidden"
+          }`}
+        >
+
+          <Section title="Dosya">
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".dxf,.dwg"
+              className="hidden"
+              onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])}
+            />
+            <Btn onClick={() => fileRef.current?.click()}>DXF Yükle</Btn>
+            <Btn variant="ghost" onClick={() => loadText(sampleDxf(), "ornek-ada.dxf")}>
+              Örnek ada yükle
+            </Btn>
+          </Section>
+
+          <Section title="Katman Seçimi">
+            <Field label="Ada katmanı">
+              <select
+                value={adaLayer}
+                onChange={(e) => setAdaLayer(e.target.value)}
+                className="w-full rounded border border-input bg-background px-2 py-1 font-mono text-xs"
+              >
+                {(doc?.layers ?? ["ADA"]).map((l) => (
+                  <option key={l} value={l}>
+                    {l}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Yapı inşaat hattı">
+              <select
+                value={hatLayer}
+                onChange={(e) => setHatLayer(e.target.value)}
+                className="w-full rounded border border-input bg-background px-2 py-1 font-mono text-xs"
+              >
+                {(doc?.layers ?? ["YAPI_INSAA_HATTI"]).map((l) => (
+                  <option key={l} value={l}>
+                    {l}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <p className="mt-1 font-mono text-[11px] text-muted-foreground">
+              {adaRings.length} ada · DXF hat katmanında {buildingLines.length} nesne · hesaplanan{" "}
+              {exactBuildingLines.length} adet tam {params.frontSetback.toFixed(2)} m paralel yapı hattı (içbükey
+              köşelerde de doğru ofset)
+            </p>
+          </Section>
+
+          <Section title="Parametreler">
+            <div className="grid gap-2 sm:grid-cols-2">
+              <div className="rounded-lg border border-sky-500/40 bg-sky-500/5 p-2">
+                <div className="mb-2 flex items-center gap-2">
+                  <span className="h-2 w-2 rounded-full bg-sky-400" />
+                  <span className="font-mono text-[10px] uppercase tracking-wider text-sky-300">Parsel verileri</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <Num tone="blue" label="Min parsel (m²)" v={params.minArea} set={(v) => setParams({ ...params, minArea: v })} />
+                  <Num tone="blue" label="Max parsel (m²)" v={params.maxArea} set={(v) => setParams({ ...params, maxArea: v })} />
+                  <Num tone="blue" label="Ara cephe (m)" v={params.midFront} set={(v) => setParams({ ...params, midFront: v })} />
+                  <Num tone="blue" label="Köşe cephe (m)" v={params.cornerFront} set={(v) => setParams({ ...params, cornerFront: v })} />
+                  <Num
+                    tone="blue"
+                    label="Tolerans (m)"
+                    step={0.05}
+                    v={params.tolerance}
+                    set={(v) => setParams({ ...params, tolerance: v })}
+                  />
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/5 p-2">
+                <div className="mb-2 flex items-center gap-2">
+                  <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                  <span className="font-mono text-[10px] uppercase tracking-wider text-emerald-300">Yapı kuralları</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <Num tone="green" label="Ön çekme (m)" v={params.frontSetback} set={(v) => setParams({ ...params, frontSetback: v })} />
+                  <Num tone="green" label="Yan çekme (m)" v={params.sideSetback} set={(v) => setParams({ ...params, sideSetback: v })} />
+                  <Num tone="green" label="Arka çekme (m)" v={params.rearSetback} set={(v) => setParams({ ...params, rearSetback: v })} />
+                  <Num
+                    tone="green"
+                    label="Min yapı (m²)"
+                    v={params.minBuildingArea}
+                    set={(v) => setParams({ ...params, minBuildingArea: v })}
+                  />
+                  <Num
+                    tone="green"
+                    label="Min yapı cephe (m)"
+                    v={params.minBuildingFront}
+                    set={(v) => setParams({ ...params, minBuildingFront: v })}
+                  />
+                  <Num
+                    tone="green"
+                    label="Min yapı derinlik (m)"
+                    v={params.minBuildingDepth}
+                    set={(v) => setParams({ ...params, minBuildingDepth: v })}
+                  />
+                  <Num tone="green" label="TAKS" step={0.01} v={params.taks} set={(v) => setParams({ ...params, taks: v })} />
+                </div>
+              </div>
+            </div>
+          </Section>
+
+
+          <Section title="Hesaplama">
+            <Btn onClick={() => compute(false)} disabled={busy || !adaRings.length}>
+              {busy ? "Hesaplanıyor…" : "Parselasyonu Hesapla (ADA 1)"}
+            </Btn>
+            <Btn variant="ghost" onClick={() => compute(true)} disabled={busy || adaRings.length < 2}>
+              Tüm adaları hesapla ({adaRings.length})
+            </Btn>
+            <Btn
+              variant="ghost"
+              onClick={() => compute(false, variant + 1)}
+              disabled={busy || !results.length}
+            >
+              ⟳ Alternatif parselasyon üret{variant > 0 ? ` (#${variant})` : ""}
+            </Btn>
+          </Section>
+
+          <Section title="Katmanlar">
+            {LAYER_KEYS.map((k) => (
+              <label key={k} className="flex cursor-pointer items-center gap-2 py-1 text-xs">
+                <input
+                  type="checkbox"
+                  checked={layers[k]}
+                  onChange={(e) => setLayers({ ...layers, [k]: e.target.checked })}
+                  className="size-4 accent-primary"
+                />
+                {LAYER_LABELS[k]}
+              </label>
+            ))}
+          </Section>
+
+          <Section title="Harita Altlığı (Google)">
+            <label className="flex cursor-pointer items-center gap-2 py-1 text-xs">
+              <input
+                type="checkbox"
+                checked={basemap.enabled}
+                onChange={(e) => setBasemap({ ...basemap, enabled: e.target.checked })}
+                className="size-4 accent-primary"
+              />
+              Altlığı göster
+            </label>
+            <Field label="Altlık tipi">
+              <select
+                value={basemap.type}
+                onChange={(e) => setBasemap({ ...basemap, type: e.target.value as BasemapConfig["type"] })}
+                className="w-full rounded-md border border-input bg-background px-2 py-1.5 font-mono text-xs"
+              >
+                <option value="hybrid">Uydu + etiket</option>
+                <option value="satellite">Uydu</option>
+                <option value="street">Sokak haritası</option>
+              </select>
+            </Field>
+            <Field label="Koordinat sistemi (DXF)">
+              <select
+                value={crs}
+                onChange={(e) => {
+                  setCrs(e.target.value);
+                  georeference(adaRings, e.target.value);
+                }}
+                className="w-full rounded-md border border-input bg-background px-2 py-1.5 font-mono text-xs"
+              >
+                {TM_PRESETS.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Btn small variant="ghost" disabled={!adaRings.length} onClick={() => georeference(adaRings)}>
+              DXF koordinatından otomatik konumla
+            </Btn>
+            <div className="grid grid-cols-2 gap-2">
+              <Num label="Enlem (merkez)" step={0.0001} v={basemap.lat} set={(v) => setBasemap({ ...basemap, lat: v, refX: undefined, refY: undefined })} />
+              <Num label="Boylam (merkez)" step={0.0001} v={basemap.lon} set={(v) => setBasemap({ ...basemap, lon: v, refX: undefined, refY: undefined })} />
+            </div>
+            <Field label={`Altlık opaklığı · ${Math.round(basemap.opacity * 100)}%`}>
+              <input
+                type="range"
+                min={0.2}
+                max={1}
+                step={0.05}
+                value={basemap.opacity}
+                onChange={(e) => setBasemap({ ...basemap, opacity: Number(e.target.value) })}
+                className="w-full accent-primary"
+              />
+            </Field>
+            <p className="text-[11px] leading-relaxed text-muted-foreground">
+              DXF projeksiyon koordinatlı (TM/UTM) ise dilim seçilip otomatik konumlanır. Dilim önekli koordinatlar
+              (ör. 36xxxxx) kendiliğinden algılanır. Yerel koordinatlarda enlem/boylam elle girilebilir.
+            </p>
+          </Section>
+
+
+          <Section title="Dışa Aktar">
+            <div className="grid grid-cols-2 gap-2">
+              <Btn
+                small
+                disabled={!results.length}
+                onClick={() => download("parselasyon.dxf", exportDXF(results, exactBuildingLines), "application/dxf")}
+              >
+                DXF
+              </Btn>
+              <Btn
+                small
+                disabled={!results.length}
+                onClick={() =>
+                  download("parselasyon.geojson", exportGeoJSON(results, exactBuildingLines), "application/geo+json")
+                }
+              >
+                GeoJSON
+              </Btn>
+              <Btn small disabled={!results.length} onClick={() => download("parsel-raporu.csv", exportCSV(results), "text/csv")}>
+                CSV
+              </Btn>
+              <Btn
+                small
+                disabled={!results.length}
+                onClick={() => download("parselasyon-paket.json", exportPackage(results, exactBuildingLines), "application/json")}
+              >
+                Paket
+              </Btn>
+              <Btn
+                small
+                disabled={!results.length}
+                onClick={() => {
+                  if (!openReportPdf(results, params, fileName || "parselasyon"))
+                    setNotice("Rapor penceresi açılamadı. Tarayıcı açılır pencere iznini kontrol edin.");
+                }}
+              >
+                PDF Rapor
+              </Btn>
+              <Btn
+                small
+                disabled={!results.length}
+                onClick={() =>
+                  download(
+                    "denetim-raporu.csv",
+                    exportAuditCSV(results, params),
+                    "text/csv",
+                  )
+                }
+              >
+                Denetim CSV
+              </Btn>
+            </div>
+            <Btn
+              disabled={!results.length || zipping}
+              onClick={async () => {
+                setZipping(true);
+                try {
+                  await downloadZip(results, exactBuildingLines, params, (fileName || "parselasyon").replace(/\.dxf$/i, ""));
+                } catch (e) {
+                  setNotice("ZIP oluşturulamadı: " + (e as Error).message);
+                } finally {
+                  setZipping(false);
+                }
+              }}
+            >
+              {zipping ? "ZIP hazırlanıyor…" : "⬇ Tümünü ZIP indir"}
+            </Btn>
+            <p className="text-[11px] leading-relaxed text-muted-foreground">
+              PDF Rapor; özet, kural seti, parsel listesi ve her geçersiz parsel için hangi kuralın neden sağlanmadığını
+              adım adım gösteren denetim bölümünü içerir (yazdır ekranında "PDF olarak kaydet").
+            </p>
+          </Section>
+
+        </aside>
+
+        {/* SOL PANEL GENİŞLİK TUTAMACI */}
+        <div
+          onPointerDown={startLeftResize}
+          onDoubleClick={() => setLeftW(380)}
+          title="Paneli genişlet / daralt (çift tıkla sıfırla)"
+          className="hidden w-1.5 shrink-0 cursor-col-resize bg-border transition-colors hover:bg-primary lg:block"
+        />
+
+        {/* HARİTA */}
+        <main className={`relative min-h-0 flex-1 lg:block ${tab === "harita" ? "block" : "hidden"}`}>
+          <PlanViewer
+            blocks={results}
+            rawBlocks={adaRings}
+            buildingLines={exactBuildingLines}
+            layers={layers}
+            basemap={basemap}
+
+            selected={selected ? { block: selected.block.id, no: selected.parcel.no } : null}
+            onSelect={(b, p) => setSelected({ block: b, parcel: p })}
+          />
+          {notice && (
+            <div className="absolute left-3 top-3 max-w-md rounded-md border border-border bg-panel/95 px-3 py-2 text-xs">
+              {notice}
+            </div>
+          )}
+          {!doc && (
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+              <p className="rounded-md border border-border bg-panel/90 px-4 py-3 text-center font-mono text-xs text-muted-foreground">
+                DXF yükleyin veya "Örnek ada yükle" ile başlayın
+              </p>
+            </div>
+          )}
+        </main>
+
+        {/* SAĞ PANEL */}
+        <aside
+          className={`min-h-0 w-full shrink-0 overflow-y-auto bg-panel p-4 lg:block lg:w-[320px] lg:border-l lg:border-border ${
+            tab === "sonuc" ? "block flex-1" : "hidden"
+          }`}
+        >
+
+          {!results.length ? (
+            <p className="font-mono text-[11px] text-muted-foreground">
+              Sonuçlar burada görünecek. Ada seçip "Parselasyonu Hesapla" ile başlayın.
+            </p>
+          ) : (
+          <>
+              <div className="mb-3 rounded border border-primary/50 bg-primary/20 px-3 py-3">
+                <div className="font-mono text-[10px] uppercase tracking-wider text-foreground/70">
+                  Toplam üretilen parsel
+                </div>
+                <div className="font-mono text-5xl font-extrabold leading-none tracking-tight text-foreground drop-shadow">
+                  {sum.parcels}
+                </div>
+                <p className="mt-2 font-mono text-[11px] text-foreground/80">
+                  {sum.blocks} ada · {sum.valid}/{sum.parcels} geçerli · ort. alan {sum.avgArea.toFixed(1)} m²
+                </p>
+              </div>
+
+
+
+              {results.length > 1 && (
+                <div className="mb-3 flex flex-wrap gap-1">
+                  {results.map((b, i) => (
+                    <button
+                      key={b.id}
+                      onClick={() => setActiveBlock(i)}
+                      className={`rounded border px-2 py-1 font-mono text-[11px] ${
+                        i === activeBlock ? "border-primary text-primary" : "border-border text-muted-foreground"
+                      }`}
+                      title={`${b.parcels.length} parsel`}
+                    >
+                      {b.name} · {b.parcels.length}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+
+              {selected && (
+                <Section title={`PARSEL ${selected.parcel.no} · ${selected.block.name}`}>
+                  <Row k="Alan" v={`${selected.parcel.area.toFixed(2)} m²`} />
+                  <Row k="Cephe" v={`${selected.parcel.frontage.toFixed(2)} m`} />
+                  <Row k="Derinlik" v={`${selected.parcel.depth.toFixed(2)} m`} />
+                  <Row k="Tip" v={selected.parcel.corner ? "KÖŞE" : "ARA"} />
+                  <Row k="Yapı" v={selected.parcel.building ? `${selected.parcel.buildingArea.toFixed(2)} m²` : "—"} />
+                  <Row k="Yapı cephesi" v={selected.parcel.building ? `${selected.parcel.buildingFront.toFixed(2)} m` : "—"} />
+                  <Row k="Yapı derinliği" v={selected.parcel.building ? `${selected.parcel.buildingDepth.toFixed(2)} m` : "—"} />
+                  <Row k="TAKS" v={selected.parcel.taksValue.toFixed(3)} />
+                  <Row k="Ön çekme" v={`${params.frontSetback} m`} />
+                  <Row k="Yan çekme" v={`${params.sideSetback} m`} />
+                  <Row k="Arka çekme" v={`${params.rearSetback} m`} />
+                  <Row
+                    k="Durum"
+                    v={selected.parcel.valid ? "✓ GEÇERLİ" : "✕ GEÇERSİZ"}
+                    tone={selected.parcel.valid ? "ok" : "bad"}
+                  />
+                  {selected.parcel.issues.map((s, i) => (
+                    <p key={i} className="mt-1 font-mono text-[11px] text-destructive">
+                      • {s}
+                    </p>
+                  ))}
+                </Section>
+              )}
+
+              {active && (
+                <>
+                  <Section title={`${active.name} Özeti`}>
+                    <Row k="Parsel" v={String(active.parcels.length)} />
+                    <Row
+                      k="Geçerli"
+                      v={`${active.parcels.filter((p) => p.valid).length}/${active.parcels.length}`}
+                      tone={active.parcels.every((p) => p.valid) ? "ok" : "bad"}
+                    />
+                    
+                    <Row k="Ada alanı" v={`${ringArea(active.ring).toFixed(1)} m²`} />
+                    <Row k="Tolerans kullanımı" v={String(active.toleranceUsed)} />
+                  </Section>
+
+                  <Section title="Genel Sonuç">
+                    <Row k="Ada sayısı" v={String(sum.blocks)} />
+                    <Row k="Toplam parsel" v={String(sum.parcels)} />
+                    <Row k="Geçerli parsel" v={`${sum.valid}/${sum.parcels}`} />
+                    <Row k="Ort. parsel alanı" v={`${sum.avgArea.toFixed(1)} m²`} />
+                    <Row k="Min / Max parsel" v={`${sum.minArea.toFixed(1)} / ${sum.maxArea.toFixed(1)} m²`} />
+                    <Row k="Ort. yapı alanı" v={`${sum.avgBuilding.toFixed(1)} m²`} />
+                    <Row k="Min / Max yapı" v={`${sum.minBuilding.toFixed(1)} / ${sum.maxBuilding.toFixed(1)} m²`} />
+                    <Row k="Yapılaşan parsel" v={`${sum.buildings}/${sum.parcels}`} />
+                    
+                  </Section>
+
+                  <Section title="Algoritma Günlüğü">
+                    {active.log.map((l, i) => (
+                      <p key={i} className="mb-1 font-mono text-[11px] leading-relaxed text-muted-foreground">
+                        {l}
+                      </p>
+                    ))}
+                  </Section>
+
+                  <Section title="Parsel Listesi">
+                    <div className="max-h-72 overflow-y-auto">
+                      <table className="w-full font-mono text-[11px]">
+                        <thead className="text-muted-foreground">
+                          <tr>
+                            <th className="text-left">No</th>
+                            <th className="text-right">Alan</th>
+                            <th className="text-right">Cephe</th>
+                            <th className="text-right">Yapı</th>
+                            <th className="text-right">TAKS</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {active.parcels.map((p) => (
+                            <tr
+                              key={p.no}
+                              onClick={() => setSelected({ block: active, parcel: p })}
+                              className={`cursor-pointer border-t border-border ${p.valid ? "" : "text-destructive"}`}
+                            >
+                              <td>{p.no}{p.corner ? "*" : ""}</td>
+                              <td className="text-right">{p.area.toFixed(1)}</td>
+                              <td className="text-right">{p.frontage.toFixed(1)}</td>
+                              <td className="text-right">{p.buildingArea ? p.buildingArea.toFixed(1) : "—"}</td>
+                              <td className="text-right">{p.taksValue ? p.taksValue.toFixed(2) : "—"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      <p className="mt-1 text-[10px] text-muted-foreground">* köşe parsel</p>
+                    </div>
+                  </Section>
+                </>
+              )}
+            </>
+          )}
+        </aside>
+      </div>
+
+      {/* MOBİL SEKMELER */}
+      <nav className="flex shrink-0 border-t border-border bg-panel lg:hidden">
+        {(
+          [
+            ["ayarlar", "Ayarlar"],
+            ["harita", "Harita"],
+            ["sonuc", "Sonuçlar"],
+          ] as const
+        ).map(([k, label]) => (
+          <button
+            key={k}
+            onClick={() => setTab(k)}
+            className={`flex-1 py-3 font-mono text-[11px] uppercase tracking-wider transition-colors ${
+              tab === k ? "border-t-2 border-primary text-primary" : "text-muted-foreground"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
+    </div>
+  );
+
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="mb-4">
+      <h2 className="mb-2 font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-primary">{title}</h2>
+      <div className="space-y-2">{children}</div>
+    </section>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="block">
+      <span className="mb-1 block font-mono text-[10px] uppercase tracking-wider text-muted-foreground">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function Num({
+  label,
+  v,
+  set,
+  step = 1,
+  tone,
+}: {
+  label: string;
+  v: number;
+  set: (n: number) => void;
+  step?: number;
+  tone?: "blue" | "green";
+}) {
+  const cls =
+    tone === "blue"
+      ? "border-sky-500/40 bg-sky-500/10 text-sky-100 focus:border-sky-400"
+      : tone === "green"
+        ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-100 focus:border-emerald-400"
+        : "border-input bg-background";
+  return (
+    <Field label={label}>
+      <input
+        type="number"
+        step={step}
+        value={v}
+        onChange={(e) => set(Number(e.target.value))}
+        className={`w-full rounded border px-2 py-1 font-mono text-xs outline-none ${cls}`}
+      />
+    </Field>
+  );
+}
+
+
+function Btn({
+  children,
+  onClick,
+  disabled,
+  variant = "solid",
+  small,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+  variant?: "solid" | "ghost";
+  small?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={`w-full rounded-md font-mono uppercase tracking-wider transition-colors disabled:opacity-40 ${
+        small ? "px-2 py-1.5 text-[10px]" : "px-3 py-2 text-[11px]"
+      } ${
+        variant === "solid"
+          ? "bg-primary text-primary-foreground hover:bg-primary/90"
+          : "border border-border bg-transparent text-foreground hover:bg-accent"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function Row({ k, v, tone }: { k: string; v: string; tone?: "ok" | "bad" }) {
+  return (
+    <div className="flex items-baseline justify-between gap-2 border-b border-border/60 py-0.5">
+      <span className="font-mono text-[11px] text-muted-foreground">{k}</span>
+      <span
+        className={`font-mono text-[11px] ${tone === "ok" ? "text-primary" : tone === "bad" ? "text-destructive" : ""}`}
+      >
+        {v}
+      </span>
+    </div>
+  );
+}
