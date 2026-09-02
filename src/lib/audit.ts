@@ -56,17 +56,17 @@ export function auditParcel(block: BlockResult, p: Parcel, params: Params): Parc
       : `Parsel alanı asgari sınırın ${f(params.minArea - p.area)} m² altında kaldı; komşu parselden alan aktarımı veya parsel sayısının bir azaltılması gerekir.`,
   );
 
-  // 2. Parsel alanı üst sınırı (yapı şartı gereği aşılabilir, yalnızca bilgi)
-  const overMax = p.area > params.maxArea + tol;
+  // 2. Parsel alanı üst sınırı (hard constraint: aşılamaz)
+  const overMax = p.area > params.maxArea;
   add(
     "P-02",
     "Maksimum parsel alanı",
-    `≤ ${params.maxArea} m² (yapılaşma şartı gereği aşılabilir)`,
+    `≤ ${params.maxArea} m²`,
     `${f(p.area)} m²`,
-    null,
+    !overMax,
     !overMax
       ? "Üst sınır aşılmıyor."
-      : `Üst sınır ${f(p.area - params.maxArea)} m² aşıldı; bu durum yapılaşma şartlarını sağlamak amacıyla kabul edilir ve kalan alan diğer parsellere dağıtılır.`,
+      : `Üst sınır ${f(p.area - params.maxArea)} m² aşıldı; kullanıcının belirlediği alan aralığı dışındaki parsel geçerli çözüm sayılmaz, parsel sayısı artırılmalı veya alan aralığı gözden geçirilmelidir.`,
   );
 
   // 3. Cephe genişliği
