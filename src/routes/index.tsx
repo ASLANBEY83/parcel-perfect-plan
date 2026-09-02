@@ -84,6 +84,9 @@ function Index() {
   const [results, setResults] = useState<BlockResult[]>([]);
   const [selected, setSelected] = useState<{ block: BlockResult; parcel: Parcel } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const workerRef = useRef<Worker | null>(null);
+  const jobRef = useRef(0);
   const [notice, setNotice] = useState<string | null>(null);
   const [variant, setVariant] = useState(0);
   const [zipping, setZipping] = useState(false);
