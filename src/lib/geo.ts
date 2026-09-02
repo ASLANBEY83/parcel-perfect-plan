@@ -51,11 +51,21 @@ export function closeRing(r: Ring): Ring {
   return dist(first, last) < 1e-9 ? r : [...r, first];
 }
 
-function toGeom(mp: MultiPoly): any {
-  return mp.map((p) => p.map((r) => closeRing(r)));
+/** MultiPoly -> GeoJSON Feature (Turf girdisi). */
+export function toFeature(mp: MultiPoly): Feature<Polygon | MultiPolygon> | null {
+  const coords = mp
+    .map((p) => p.map((r) => closeRing(r)).filter((r) => r.length >= 4))
+    .filter((p) => p.length > 0);
+  if (!coords.length) return null;
+  return coords.length === 1 ? turf.polygon(coords) : turf.multiPolygon(coords);
 }
-function fromGeom(g: any): MultiPoly {
-  return (g as number[][][][]).map((p) =>
+
+/** Turf sonucunu MultiPoly'ye çevirir (kapanış noktası atılır). */
+export function fromFeature(feat: Feature<Polygon | MultiPolygon> | null | undefined): MultiPoly {
+  if (!feat?.geometry) return [];
+  const g = feat.geometry;
+  const polys: number[][][][] = g.type === "MultiPolygon" ? (g.coordinates as number[][][][]) : [g.coordinates as number[][][]];
+  return polys.map((p) =>
     p.map((r) => {
       const rr = r.map((c) => [c[0], c[1]] as Pt);
       if (rr.length > 1 && dist(rr[0], rr[rr.length - 1]) < 1e-9) rr.pop();
@@ -64,32 +74,44 @@ function fromGeom(g: any): MultiPoly {
   );
 }
 
+/** Turf ile kesişim (turf.intersect). */
 export function mpIntersect(a: MultiPoly, b: MultiPoly): MultiPoly {
-  if (!a.length || !b.length) return [];
+  const fa = toFeature(a);
+  const fb = toFeature(b);
+  if (!fa || !fb) return [];
   try {
-    return fromGeom(polygonClipping.intersection(toGeom(a) as any, toGeom(b) as any));
+    return fromFeature(turf.intersect(turf.featureCollection([fa, fb])));
   } catch {
     return [];
   }
 }
+
+/** Turf ile fark (turf.difference). */
 export function mpDifference(a: MultiPoly, b: MultiPoly): MultiPoly {
-  if (!a.length) return [];
-  if (!b.length) return a;
+  const fa = toFeature(a);
+  if (!fa) return [];
+  const fb = toFeature(b);
+  if (!fb) return a;
   try {
-    return fromGeom(polygonClipping.difference(toGeom(a) as any, toGeom(b) as any));
+    return fromFeature(turf.difference(turf.featureCollection([fa, fb])));
   } catch {
     return [];
   }
 }
+
+/** Turf ile birleşim (turf.union). */
 export function mpUnion(a: MultiPoly, b: MultiPoly): MultiPoly {
-  if (!a.length) return b;
-  if (!b.length) return a;
+  const fa = toFeature(a);
+  if (!fa) return b;
+  const fb = toFeature(b);
+  if (!fb) return a;
   try {
-    return fromGeom(polygonClipping.union(toGeom(a) as any, toGeom(b) as any));
+    return fromFeature(turf.union(turf.featureCollection([fa, fb])) as Feature<Polygon | MultiPolygon>);
   } catch {
     return a;
   }
 }
+
 
 /** En büyük alanlı parçayı döndürür. */
 export function largestPoly(mp: MultiPoly): Poly | null {
