@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { PlanViewer, type BasemapConfig, type LayerVisibility } from "@/components/PlanViewer";
 import { linesOfLayer, parseDxf, polygonsOfLayer, type DxfDoc } from "@/lib/dxf";
 import type { Pt, Ring } from "@/lib/geo";
@@ -16,7 +16,8 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
-import { Crosshair, Download, FileText, Layers, Map as MapIcon, Play, RefreshCw, SlidersHorizontal, Upload } from "lucide-react";
+import { Crosshair, Download, FileText, Layers, Map as MapIcon, Play, RefreshCw, SlidersHorizontal, Upload, X } from "lucide-react";
+import type { WorkerRequest, WorkerResponse } from "@/workers/parcelation.worker";
 
 function PanelItem({
   value,
@@ -84,6 +85,10 @@ function Index() {
   const [results, setResults] = useState<BlockResult[]>([]);
   const [selected, setSelected] = useState<{ block: BlockResult; parcel: Parcel } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [elapsed, setElapsed] = useState(0);
+  const workerRef = useRef<Worker | null>(null);
+  const jobRef = useRef(0);
   const [notice, setNotice] = useState<string | null>(null);
   const [variant, setVariant] = useState(0);
   const [zipping, setZipping] = useState(false);
@@ -191,31 +196,110 @@ function Index() {
     r.readAsText(f);
   }
 
-  function compute(all: boolean, variant = 0) {
-    if (!adaRings.length) {
-      setNotice("Seçilen katmanda kapalı ada poligonu bulunamadı.");
-      return;
-    }
-    setBusy(true);
-    setVariant(variant);
+  function runInline(rings: Ring[], variant: number) {
     setTimeout(() => {
       try {
-        const target = all ? adaRings : adaRings.slice(0, 1);
-        const out = target.map((r, i) =>
+        const out = rings.map((r, i) =>
           optimizeBlock(r, exactBuildingLines, params, { id: `ada-${i + 1}`, name: `ADA ${i + 1}`, variant }),
         );
         setResults(out);
         setActiveBlock(0);
         setSelected(null);
         setNotice(variant > 0 ? `Alternatif parselasyon #${variant} üretildi.` : null);
-
       } catch (err) {
         setNotice("Hesaplama hatası: " + (err as Error).message);
       } finally {
         setBusy(false);
+        setProgress(null);
       }
     }, 30);
   }
+
+  function cancelCompute() {
+    workerRef.current?.terminate();
+    workerRef.current = null;
+    jobRef.current += 1;
+    setBusy(false);
+    setProgress(null);
+    setNotice("Hesaplama iptal edildi.");
+  }
+
+  function compute(all: boolean, variant = 0) {
+    if (!adaRings.length) {
+      setNotice("Seçilen katmanda kapalı ada poligonu bulunamadı.");
+      return;
+    }
+    const target = all ? adaRings : adaRings.slice(0, 1);
+    setBusy(true);
+    setVariant(variant);
+    setNotice(null);
+    setProgress({ done: 0, total: target.length });
+
+    // Ağır geometri hesabı arka planda çalışır; arayüz ve harita donmaz.
+    workerRef.current?.terminate();
+    const jobId = ++jobRef.current;
+    let worker: Worker;
+    try {
+      worker = new Worker(new URL("../workers/parcelation.worker.ts", import.meta.url), { type: "module" });
+    } catch {
+      runInline(target, variant);
+      return;
+    }
+    workerRef.current = worker;
+
+    worker.onmessage = (ev: MessageEvent<WorkerResponse>) => {
+      const msg = ev.data;
+      if (msg.jobId !== jobRef.current) return;
+      if (msg.type === "progress") {
+        setProgress({ done: msg.done, total: msg.total });
+      } else if (msg.type === "done") {
+        setResults(msg.results);
+        setActiveBlock(0);
+        setSelected(null);
+        setNotice(variant > 0 ? `Alternatif parselasyon #${variant} üretildi.` : null);
+        setBusy(false);
+        setProgress(null);
+        worker.terminate();
+        if (workerRef.current === worker) workerRef.current = null;
+      } else if (msg.type === "error") {
+        setNotice("Hesaplama hatası: " + msg.message);
+        setBusy(false);
+        setProgress(null);
+        worker.terminate();
+        if (workerRef.current === worker) workerRef.current = null;
+      }
+    };
+    worker.onerror = () => {
+      if (jobId !== jobRef.current) return;
+      worker.terminate();
+      if (workerRef.current === worker) workerRef.current = null;
+      runInline(target, variant); // worker desteklenmiyorsa eski yol
+    };
+
+    worker.postMessage({
+      type: "compute",
+      jobId,
+      rings: target,
+      buildingLines: exactBuildingLines,
+      params,
+      variant,
+    } satisfies WorkerRequest);
+  }
+
+
+  // Hesaplama süresi sayacı (yalnızca gösterim amaçlı)
+  useEffect(() => {
+    if (!busy) {
+      setElapsed(0);
+      return;
+    }
+    const t0 = Date.now();
+    const id = setInterval(() => setElapsed(Math.round((Date.now() - t0) / 1000)), 1000);
+    return () => clearInterval(id);
+  }, [busy]);
+
+  // Sekme kapanırken/ayrılırken arka plan işçisini serbest bırak
+  useEffect(() => () => workerRef.current?.terminate(), []);
 
   const sum = summarize(results);
   const active = results[activeBlock];
@@ -268,9 +352,31 @@ function Index() {
                 <FileText /> Örnek Ada
               </Btn>
             </div>
-            <Btn onClick={() => compute(false)} disabled={busy || !adaRings.length}>
-              <Play /> {busy ? "Hesaplanıyor…" : "Parselasyonu Hesapla"}
-            </Btn>
+            {busy ? (
+              <div className="space-y-2">
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                  <div
+                    className="h-full rounded-full bg-primary transition-all"
+                    style={{
+                      width: progress && progress.total ? `${(progress.done / progress.total) * 100}%` : "25%",
+                    }}
+                  />
+                </div>
+                <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+                  Hesaplanıyor{progress ? ` · ${progress.done}/${progress.total} ada` : "…"} · {elapsed} sn
+                </p>
+                <p className="text-[10px] leading-snug text-muted-foreground">
+                  Ağır geometri optimizasyonu arka planda çalışıyor; arayüz ve harita kullanılabilir durumda kalır.
+                </p>
+                <Btn small variant="ghost" onClick={cancelCompute}>
+                  <X /> Vazgeç
+                </Btn>
+              </div>
+            ) : (
+              <Btn onClick={() => compute(false)} disabled={!adaRings.length}>
+                <Play /> Parselasyonu Hesapla
+              </Btn>
+            )}
             <div className="grid grid-cols-2 gap-2">
               <Btn small variant="ghost" onClick={() => compute(true)} disabled={busy || adaRings.length < 2}>
                 <Layers /> Tüm adalar ({adaRings.length})
