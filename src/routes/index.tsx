@@ -191,31 +191,96 @@ function Index() {
     r.readAsText(f);
   }
 
-  function compute(all: boolean, variant = 0) {
-    if (!adaRings.length) {
-      setNotice("Seçilen katmanda kapalı ada poligonu bulunamadı.");
-      return;
-    }
-    setBusy(true);
-    setVariant(variant);
+  function runInline(rings: Ring[], variant: number) {
     setTimeout(() => {
       try {
-        const target = all ? adaRings : adaRings.slice(0, 1);
-        const out = target.map((r, i) =>
+        const out = rings.map((r, i) =>
           optimizeBlock(r, exactBuildingLines, params, { id: `ada-${i + 1}`, name: `ADA ${i + 1}`, variant }),
         );
         setResults(out);
         setActiveBlock(0);
         setSelected(null);
         setNotice(variant > 0 ? `Alternatif parselasyon #${variant} üretildi.` : null);
-
       } catch (err) {
         setNotice("Hesaplama hatası: " + (err as Error).message);
       } finally {
         setBusy(false);
+        setProgress(null);
       }
     }, 30);
   }
+
+  function cancelCompute() {
+    workerRef.current?.terminate();
+    workerRef.current = null;
+    jobRef.current += 1;
+    setBusy(false);
+    setProgress(null);
+    setNotice("Hesaplama iptal edildi.");
+  }
+
+  function compute(all: boolean, variant = 0) {
+    if (!adaRings.length) {
+      setNotice("Seçilen katmanda kapalı ada poligonu bulunamadı.");
+      return;
+    }
+    const target = all ? adaRings : adaRings.slice(0, 1);
+    setBusy(true);
+    setVariant(variant);
+    setNotice(null);
+    setProgress({ done: 0, total: target.length });
+
+    // Ağır geometri hesabı arka planda çalışır; arayüz ve harita donmaz.
+    workerRef.current?.terminate();
+    const jobId = ++jobRef.current;
+    let worker: Worker;
+    try {
+      worker = new Worker(new URL("../workers/parcelation.worker.ts", import.meta.url), { type: "module" });
+    } catch {
+      runInline(target, variant);
+      return;
+    }
+    workerRef.current = worker;
+
+    worker.onmessage = (ev: MessageEvent<WorkerResponse>) => {
+      const msg = ev.data;
+      if (msg.jobId !== jobRef.current) return;
+      if (msg.type === "progress") {
+        setProgress({ done: msg.done, total: msg.total });
+      } else if (msg.type === "done") {
+        setResults(msg.results);
+        setActiveBlock(0);
+        setSelected(null);
+        setNotice(variant > 0 ? `Alternatif parselasyon #${variant} üretildi.` : null);
+        setBusy(false);
+        setProgress(null);
+        worker.terminate();
+        if (workerRef.current === worker) workerRef.current = null;
+      } else if (msg.type === "error") {
+        setNotice("Hesaplama hatası: " + msg.message);
+        setBusy(false);
+        setProgress(null);
+        worker.terminate();
+        if (workerRef.current === worker) workerRef.current = null;
+      }
+    };
+    worker.onerror = () => {
+      if (jobId !== jobRef.current) return;
+      worker.terminate();
+      if (workerRef.current === worker) workerRef.current = null;
+      runInline(target, variant); // worker desteklenmiyorsa eski yol
+    };
+
+    worker.postMessage({
+      type: "compute",
+      jobId,
+      rings: target,
+      buildingLines: exactBuildingLines,
+      params,
+      variant,
+    } satisfies WorkerRequest);
+  }
+
 
   const sum = summarize(results);
   const active = results[activeBlock];
