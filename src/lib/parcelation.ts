@@ -153,7 +153,7 @@ function equalAreaChainages(ring: Ring, line: Pt[], n: number, wStart = 1, wEnd 
   return out;
 }
 
-function edgeLengthOnLines(ring: Ring, lines: Pt[][], tol = 0.7): number {
+function edgeLengthOnLines(ring: Ring, lines: Pt[][], tol = FRONTAGE_DETECTION.EDGE_ON_LINE_TOLERANCE): number {
   let total = 0;
   for (let i = 0; i < ring.length; i++) {
     const a = ring[i];
@@ -170,25 +170,58 @@ function edgeLengthOnLines(ring: Ring, lines: Pt[][], tol = 0.7): number {
   return total;
 }
 
-function buildEnvelope(ring: Ring, frontLines: Pt[][], p: Params): Ring {
+export type EdgeKind = "front" | "side" | "rear";
+
+/**
+ * Bir kenarın yol cephesi / yan / arka olarak sınıflandırılması.
+ * Yol cephesi tespiti mevcut mekanizmayla (kenarın yol hattına yakınlığı,
+ * kısa kenar istisnası) yapılır; yol cephesi olmayan kenarlar, yol cephesi
+ * doğrultusuna paralel ise ARKA, dik ise YAN kenar sayılır.
+ */
+function classifyEdge(a: Pt, b: Pt, frontLines: Pt[][], roadFrontages: Pt[][]): EdgeKind {
+  const H = FRONTAGE_DETECTION;
+  const samples: Pt[] = H.FRONTAGE_SAMPLE_RATIOS.map((t) => [
+    a[0] + (b[0] - a[0]) * t,
+    a[1] + (b[1] - a[1]) * t,
+  ]);
+  const onRoad = samples.filter((m) =>
+    frontLines.some((l) => nearestOnPolyline(m, l).d < H.ROAD_FRONTAGE_DISTANCE_TOLERANCE),
+  ).length;
+  const short = dist(a, b) < H.SHORT_EDGE_EXCEPTION_LENGTH;
+  const need = short ? H.MIN_SAMPLES_ON_ROAD_SHORT : H.MIN_SAMPLES_ON_ROAD;
+  if (onRoad >= need) return "front";
+
+  // Yol cephesine paralel olan iç kenar arka bahçe sınırıdır.
+  const mid: Pt = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  const dirEdge = norm(sub(b, a));
+  let best = { d: Infinity, dir: null as Pt | null };
+  for (const l of roadFrontages) {
+    if (l.length < 2) continue;
+    const near = nearestOnPolyline(mid, l);
+    if (near.d < best.d) {
+      const seg = Math.min(near.seg, l.length - 2);
+      best = { d: near.d, dir: norm(sub(l[seg + 1], l[seg])) };
+    }
+  }
+  if (!best.dir) return "side";
+  return Math.abs(dot(dirEdge, best.dir)) >= EDGE_CLASSIFICATION.REAR_EDGE_PARALLEL_MIN ? "rear" : "side";
+}
+
+/**
+ * Yapı yaklaşma sınırı (zarf): her kenar geometrik olarak sınıflandırılır ve
+ * kullanıcının girdiği runtime çekme mesafesi uygulanır:
+ * yol cephesi → frontSetback, yan kenar → sideSetback, arka kenar → rearSetback.
+ */
+function buildEnvelope(ring: Ring, frontLines: Pt[][], p: Params, roadFrontages: Pt[][] = []): Ring {
   const r = ensureCCW(ring);
   return clipInset(r, (i) => {
     const a = r[i];
     const b = r[(i + 1) % r.length];
-    // Kenarı birden çok noktadan örnekle: köşe parsellerin ikinci (yan) yol cephesi de
-    // güvenilir biçimde "yol cephesi" sayılsın ve 5 m çekme uygulansın.
-    // Ada köşelerinde 3-5 kırık olabildiği için kısa kenarlarda eşik düşürülür.
-    const samples: Pt[] = [0.15, 0.3, 0.5, 0.7, 0.85].map((t) => [
-      a[0] + (b[0] - a[0]) * t,
-      a[1] + (b[1] - a[1]) * t,
-    ]);
-    const onRoad = samples.filter((m) => frontLines.some((l) => nearestOnPolyline(m, l).d < 0.9)).length;
-    const short = dist(a, b) < 3;
-    const isFront = short ? onRoad >= 2 : onRoad >= 3;
-    return isFront ? p.frontSetback : p.sideSetback;
-
+    const kind = classifyEdge(a, b, frontLines, roadFrontages);
+    return kind === "front" ? p.frontSetback : kind === "rear" ? p.rearSetback : p.sideSetback;
   });
 }
+
 
 
 function clipInset(r: Ring, distFor: (i: number) => number): Ring {
