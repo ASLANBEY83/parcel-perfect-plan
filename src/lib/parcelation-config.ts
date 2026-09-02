@@ -14,6 +14,9 @@
  * runtime'da taşınır ve burada ASLA sabitlenmez.
  */
 
+/** Eşit alanlı kesim aramasında cephe hattı boyunca örnekleme adım sayısı. */
+export const EQUAL_AREA_SAMPLE_STEPS = 240;
+
 /** Kenarın "yol cephesi" sayılması için geometrik eşikler. */
 export const FRONTAGE_DETECTION = {
   /** Örnek noktanın yol/ada hattına en fazla bu mesafede olması gerekir (m). */
