@@ -887,7 +887,8 @@ function scoreSolution(parcels: Parcel[], p: Params, tolUsed: number): number {
   const valid = parcels.filter((x) => x.valid);
   const inRange = parcels.filter((x) => x.area >= p.minArea && x.area <= p.maxArea).length;
   const bldSd = stddev(valid.map((x) => x.buildingArea));
-  // Maksimum alan aşımı yasak değil, sadece hafif cezalandırılır.
+  // Maksimum alan aşımı artık HARD CONSTRAINT (parsel geçersiz olur); buradaki ceza
+  // yalnızca aynı geçerli parsel sayısına sahip çözümler arasında ayrım içindir.
   const overflow = parcels.reduce((s, x) => s + Math.max(0, x.area - p.maxArea), 0);
   const W = SOLUTION_SCORE_WEIGHTS;
   return (
