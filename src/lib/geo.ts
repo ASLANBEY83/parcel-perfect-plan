@@ -57,7 +57,7 @@ export function toFeature(mp: MultiPoly): Feature<Polygon | MultiPolygon> | null
     .map((p) => p.map((r) => closeRing(r)).filter((r) => r.length >= 4))
     .filter((p) => p.length > 0);
   if (!coords.length) return null;
-  return coords.length === 1 ? turf.polygon(coords) : turf.multiPolygon(coords);
+  return coords.length === 1 ? turf.polygon(coords[0] as number[][][]) : turf.multiPolygon(coords as number[][][][]);
 }
 
 /** Turf sonucunu MultiPoly'ye çevirir (kapanış noktası atılır). */
