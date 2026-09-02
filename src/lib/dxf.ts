@@ -43,9 +43,10 @@ export function parseDxf(text: string): DxfDoc {
   }
   for (const [layer, segs] of byLayer) entities.push(...chainSegments(layer, segs));
 
-  const layers = Array.from(
-    new Set([...Object.keys(dxf?.tables?.layer?.layers ?? {}), ...entities.map((e) => e.layer)]),
-  );
+  // Yalnızca gerçekten geometri içeren katmanlar listelenir; tablodaki boş
+  // katmanlar (veri taşımayan tanımlar) katman seçiminde gösterilmez.
+  const layers = Array.from(new Set(entities.filter((e) => e.points.length >= 2).map((e) => e.layer)));
+
   return { layers, entities };
 }
 
