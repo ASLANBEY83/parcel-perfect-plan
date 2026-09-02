@@ -287,6 +287,20 @@ function Index() {
   }
 
 
+  // Hesaplama süresi sayacı (yalnızca gösterim amaçlı)
+  useEffect(() => {
+    if (!busy) {
+      setElapsed(0);
+      return;
+    }
+    const t0 = Date.now();
+    const id = setInterval(() => setElapsed(Math.round((Date.now() - t0) / 1000)), 1000);
+    return () => clearInterval(id);
+  }, [busy]);
+
+  // Sekme kapanırken/ayrılırken arka plan işçisini serbest bırak
+  useEffect(() => () => workerRef.current?.terminate(), []);
+
   const sum = summarize(results);
   const active = results[activeBlock];
 
