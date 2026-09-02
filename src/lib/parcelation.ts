@@ -813,14 +813,33 @@ function buildRowParcels(
       hard++;
       issues.push(m);
     };
-    if (area < p.minArea) fail(`Alan ${area.toFixed(1)} m² < ${p.minArea} m²`);
-    // Yapılaşma şartları sağlanabilsin diye maksimum alan sınırı aşılabilir (bilgi amaçlı).
-    if (area > p.maxArea) issues.push(`ℹ Alan ${area.toFixed(1)} m² > ${p.maxArea} m² (yapı şartı için izin verildi)`);
+    // Parsel alanı HARD CONSTRAINT: kullanıcının girdiği min–max aralığı dışı geçersizdir.
+    if (area < p.minArea)
+      fail(`Parsel alanı minimum değerin altında: ${area.toFixed(1)} m² < ${p.minArea} m²`);
+    if (area > p.maxArea)
+      fail(`Parsel alanı maksimum değerin üzerinde: ${area.toFixed(1)} m² > ${p.maxArea} m²`);
     const minF = corner ? p.cornerFront : p.midFront;
     if (frontage < minF - 1e-6)
       fail(`${corner ? "Köşe" : "Ara"} parsel cephesi ${frontage.toFixed(2)} m < ${minF} m`);
-    if (!bld.ring) fail("Kurallara uygun yapı bloğu oluşturulamadı");
-    else {
+    if (!bld.ring) {
+      // Red nedenini ayrıştır: önleyici geometrik kapasite kontrolü.
+      const requiredDepth = p.frontSetback + p.rearSetback + p.minBuildingDepth;
+      const usableDepth = depth;
+      const envArea = envelope.length >= 3 ? Math.abs(ringArea(envelope)) : 0;
+      if (envelope.length < 3)
+        fail(
+          `Ön/yan/arka çekme (${p.frontSetback}/${p.sideSetback}/${p.rearSetback} m) nedeniyle yapı yaklaşma sınırı oluşmuyor`,
+        );
+      else if (usableDepth < requiredDepth - 1e-6)
+        fail(
+          `Yapılaşabilir minimum derinlik sağlanamıyor: kullanılabilir ${usableDepth.toFixed(2)} m < gerekli ${requiredDepth.toFixed(2)} m (ön ${p.frontSetback} + arka ${p.rearSetback} + yapı ${p.minBuildingDepth})`,
+        );
+      else if (envArea < p.minBuildingArea - 1e-6)
+        fail(
+          `Çekme mesafelerinden sonra kalan yapı alanı ${envArea.toFixed(1)} m² < ${p.minBuildingArea} m²`,
+        );
+      else fail("Kurallara uygun yapı bloğu oluşturulamadı");
+    } else {
       if (bld.area < p.minBuildingArea) fail(`Yapı alanı ${bld.area.toFixed(1)} m² < ${p.minBuildingArea} m²`);
       if (bld.front < p.minBuildingFront) fail(`Yapı cephesi ${bld.front.toFixed(2)} m < ${p.minBuildingFront} m`);
       if (bld.depth < p.minBuildingDepth - 1e-4) fail(`Yapı derinliği ${bld.depth.toFixed(2)} m < ${p.minBuildingDepth} m`);
