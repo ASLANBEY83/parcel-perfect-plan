@@ -1,12 +1,19 @@
 // Düzlemsel (metre tabanlı) geometri yardımcıları.
-// DXF koordinatları projekte metre olduğundan coğrafi (derece) kütüphaneler yerine
-// doğrudan düzlemsel hesap yapılır.
-import polygonClipping from "polygon-clipping";
+// DXF koordinatları projekte metre olduğundan, mesafe/alan hesapları düzlemsel
+// (kartezyen) yapılır. Poligon topolojisi (kesişim, fark, birleşim, nokta-içinde)
+// artık Turf.js üzerinden yürütülür; Turf bu işlemleri koordinat sistemi bağımsız
+// (polygon-clipping tabanlı) yaptığı için metre tabanlı verilerle de doğrudur.
+// UYARI: turf.area / turf.buffer / turf.length gibi fonksiyonlar WGS84 (derece)
+// varsayar; metre koordinatlarda yanlış sonuç verecekleri için alan ve ofset
+// hesapları düzlemsel formüllerle yapılır.
+import * as turf from "@turf/turf";
+import type { Feature, MultiPolygon, Polygon } from "geojson";
 
 export type Pt = [number, number];
 export type Ring = Pt[]; // kapalı kabul edilir (son nokta ilk noktaya eşit olmayabilir)
 export type Poly = Ring[]; // [dış halka, ...delikler]
 export type MultiPoly = Poly[];
+
 
 export const sub = (a: Pt, b: Pt): Pt => [a[0] - b[0], a[1] - b[1]];
 export const add = (a: Pt, b: Pt): Pt => [a[0] + b[0], a[1] + b[1]];
