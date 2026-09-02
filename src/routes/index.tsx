@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { PlanViewer, type BasemapConfig, type LayerVisibility } from "@/components/PlanViewer";
 import { linesOfLayer, parseDxf, polygonsOfLayer, type DxfDoc } from "@/lib/dxf";
 import type { Pt, Ring } from "@/lib/geo";
