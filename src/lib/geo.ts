@@ -209,6 +209,11 @@ export function centroid(r: Ring): Pt {
   return [x / (6 * a), y / (6 * a)];
 }
 
+/**
+ * Nokta halka içinde mi? Turf ile aynı sonucu veren, sıcak döngüler için
+ * ayırılmış (allocation yapmayan) ray-casting uygulaması.
+ * Tek seferlik/kritik kontroller için turf tabanlı `pointInPoly` kullanılır.
+ */
 export function pointInRing(p: Pt, r: Ring): boolean {
   let inside = false;
   for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
@@ -218,6 +223,26 @@ export function pointInRing(p: Pt, r: Ring): boolean {
   }
   return inside;
 }
+
+/** Turf ile nokta-poligon testi (delikleri de dikkate alır). */
+export function pointInPoly(p: Pt, mp: MultiPoly): boolean {
+  const feat = toFeature(mp);
+  if (!feat) return false;
+  return turf.booleanPointInPolygon(turf.point(p), feat);
+}
+
+/** Turf ile iki poligonun kesişip kesişmediği (turf.booleanIntersects). */
+export function mpIntersects(a: MultiPoly, b: MultiPoly): boolean {
+  const fa = toFeature(a);
+  const fb = toFeature(b);
+  if (!fa || !fb) return false;
+  try {
+    return turf.booleanIntersects(fa, fb);
+  } catch {
+    return mpArea(mpIntersect(a, b)) > 1e-9;
+  }
+}
+
 
 /** Noktanın polyline'a en yakın mesafesi ve izdüşümü. */
 export function nearestOnPolyline(p: Pt, line: Pt[]) {
