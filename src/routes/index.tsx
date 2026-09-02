@@ -16,7 +16,8 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
-import { Crosshair, Download, FileText, Layers, Map as MapIcon, Play, RefreshCw, SlidersHorizontal, Upload } from "lucide-react";
+import { Crosshair, Download, FileText, Layers, Map as MapIcon, Play, RefreshCw, SlidersHorizontal, Upload, X } from "lucide-react";
+import type { WorkerRequest, WorkerResponse } from "@/workers/parcelation.worker";
 
 function PanelItem({
   value,
