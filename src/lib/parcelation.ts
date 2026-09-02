@@ -947,12 +947,15 @@ function solveRow(
     };
     // Öncelik sırası: köşe parsellerin yapılaşma şartı → toplam geçerli parsel
     // → parsel alanlarının eşitliği (skor içinde ağırlıklı) .
+    // Öncelik: TOPLAM GEÇERLİ PARSEL SAYISI → köşe parsellerin uygunluğu → skor.
+    // (Geçersiz alanlı/yapılaşamayan parseller "geçerli" sayılmadığı için büyük parsel
+    // üretip başarısızlığı gizleyen çözümler bu sıralamada öne geçemez.)
     const better = (a: RowSolution, b: RowSolution | null) => {
       if (!b) return true;
+      if (a.validCount !== b.validCount) return a.validCount > b.validCount;
       const ca = cornerValidCount(a.parcels);
       const cb = cornerValidCount(b.parcels);
       if (ca !== cb) return ca > cb;
-      if (a.validCount !== b.validCount) return a.validCount > b.validCount;
       return a.score > b.score;
     };
     const cornersOk = (s: RowSolution) =>
