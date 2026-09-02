@@ -349,7 +349,10 @@ function Index() {
                   />
                 </div>
                 <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
-                  Hesaplanıyor{progress ? ` · ${progress.done}/${progress.total} ada` : "…"}
+                  Hesaplanıyor{progress ? ` · ${progress.done}/${progress.total} ada` : "…"} · {elapsed} sn
+                </p>
+                <p className="text-[10px] leading-snug text-muted-foreground">
+                  Ağır geometri optimizasyonu arka planda çalışıyor; arayüz ve harita kullanılabilir durumda kalır.
                 </p>
                 <Btn small variant="ghost" onClick={cancelCompute}>
                   <X /> Vazgeç
