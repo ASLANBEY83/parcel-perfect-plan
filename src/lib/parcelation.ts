@@ -914,7 +914,7 @@ function evaluateParcel(
         fail(`Yapı derinliği ${bld.depth.toFixed(2)} m < ${p.minBuildingDepth} m`);
       if (bld.area / area > p.taks + 1e-6) fail(`TAKS ${(bld.area / area).toFixed(3)} > ${p.taks}`);
     }
-    parcels.push({
+    return {
       no: 0,
       row: rowIndex,
       ring,
@@ -930,11 +930,45 @@ function evaluateParcel(
       taksValue: bld.area / area,
       valid: hard === 0,
       issues,
-    });
-    void tangent;
+    };
+  }
+}
+
+function buildRowParcels(
+  rowRing: Ring,
+  frontLine: Pt[],
+  cuts: CutDef[],
+  buildingLines: Pt[][],
+  allFrontages: Pt[][],
+  roadLines: Pt[][],
+  p: Params,
+  rowIndex: number,
+): Parcel[] {
+  const tangentAt = (c: CutDef): Pt => cutNormal(c);
+  const parcels: Parcel[] = [];
+  const n = cuts.length + 1;
+  for (let i = 0; i < n; i++) {
+    const a = i === 0 ? null : cuts[i - 1];
+    const b = i === n - 1 ? null : cuts[i];
+    let ring = rowRing;
+    if (a) ring = clipHalfPlane(ring, a.pt, tangentAt(a));
+    if (ring.length >= 3 && b) ring = clipHalfPlane(ring, b.pt, mul(tangentAt(b), -1));
+    if (ring.length < 3) continue;
+    const parcel = evaluateParcel(
+      ring,
+      frontLine,
+      buildingLines,
+      allFrontages,
+      roadLines,
+      p,
+      i === 0 || i === n - 1,
+      rowIndex,
+    );
+    if (parcel) parcels.push(parcel);
   }
   return parcels;
 }
+
 
 function cornerValidCount(parcels: Parcel[]): number {
   return parcels.filter((x) => x.corner && x.valid).length;
