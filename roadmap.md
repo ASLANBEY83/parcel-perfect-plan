@@ -28,3 +28,8 @@
   - rebalanceCutsToAreas(): ortak arka nokta sabit tutulur, alan sapması kesimin
     YOL KENARINDAKİ ucu chainage boyunca kaydırılarak giderilir (cepheye dik olma kuralı göz ardı)
   - Doğrulama: tsgo 0, regresyon 7/7, A 14/14, B 13/13, 350ADA 12/12, tüm bloklar dik açılı
+- [x] Ada kırık noktası birleşimi (snapRowToAdaVertices)
+  - kesim arka köşesi tolerans içinde ada sınırı kırık noktasına yakınsa köşe TAM o noktaya taşınır
+  - weldRearCorners ortak noktası da tolerans içindeki ada kırık noktasına çekilir
+  - alan sapması kesimin YOL KENARINDAKİ ucu kaydırılarak dengelenir (diklik kuralı istisna)
+  - Doğrulama: tsgo 0, A 14/14, B 13/13, 350ADA 12/12, regresyon 7/7, tüm bloklar dik açılı
