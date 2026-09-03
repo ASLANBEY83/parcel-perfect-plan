@@ -1915,6 +1915,32 @@ export function optimizeBlock(
     }
   });
 
+  // Alan eşitlemesi kesimleri kaydırmış olabileceğinden, 1 m içinde yaklaşan
+  // sırt sırta parsel sınırlarının tek noktada birleşme kuralı YENİDEN uygulanır.
+  if (solutions.length === 2 && solutions[0] && solutions[1]) {
+    const weld = weldRearCorners(
+      rows,
+      solutions as [RowSolution, RowSolution],
+      buildingLines,
+      frontages,
+      roadLines,
+      p,
+    );
+    if (weld) {
+      toleranceUsed = Math.max(toleranceUsed, weld.count);
+      [0, 1].forEach((i) => {
+        solutions[i]!.parcels = weld.rowsOut[i];
+        solutions[i]!.cuts = weld.cuts[i];
+        solutions[i]!.validCount = weld.rowsOut[i].filter((x) => x.valid).length;
+      });
+      log.push(
+        `Son kontrol: ${weld.count} adet sırt sırta parsel köşesi (en büyük açıklık ${weld.maxGap.toFixed(2)} m ≤ ${p.tolerance.toFixed(2)} m) tek ortak noktada birleştirildi.`,
+      );
+    }
+  }
+
+
+
   const parcels: Parcel[] = [];
   solutions.forEach((s) => s && parcels.push(...s.parcels));
 
