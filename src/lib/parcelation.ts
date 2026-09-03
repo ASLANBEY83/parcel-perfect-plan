@@ -2386,12 +2386,60 @@ export function optimizeBlock(
       return out.length ? out : [poly];
     };
 
+    let created = 0;
     for (let pass = 0; pass < 4; pass++) {
       let uni: MultiPoly = [];
       for (const pc of parcels) uni = mpUnion(uni, [[pc.ring]]);
       const pieces = mpDifference(blockMp, uni).filter((poly) => Math.abs(mpArea([poly])) > 0.5);
       if (!pieces.length) break;
       let changed = false;
+
+      // 1) Artık parça tek başına koşulları sağlıyorsa YENİ parsel olarak üretilir.
+      for (const raw of pieces) {
+        const rawArea = Math.abs(mpArea([raw]));
+        if (rawArea < p.minArea - p.tolerance) continue;
+        const target = (p.minArea + p.maxArea) / 2;
+        const n = Math.max(1, Math.round(rawArea / target));
+        const bb = bbox(raw[0]);
+        const horiz = bb.w >= bb.h;
+        const chunks: MultiPoly = [];
+        for (let i = 0; i < n; i++) {
+          const t0 = i / n;
+          const t1 = (i + 1) / n;
+          const band: Ring = horiz
+            ? [
+                [bb.minX + bb.w * t0, bb.minY - 1],
+                [bb.minX + bb.w * t1, bb.minY - 1],
+                [bb.minX + bb.w * t1, bb.maxY + 1],
+                [bb.minX + bb.w * t0, bb.maxY + 1],
+              ]
+            : [
+                [bb.minX - 1, bb.minY + bb.h * t0],
+                [bb.maxX + 1, bb.minY + bb.h * t0],
+                [bb.maxX + 1, bb.minY + bb.h * t1],
+                [bb.minX - 1, bb.minY + bb.h * t1],
+              ];
+          for (const q of mpIntersect([raw], [[band]])) if (Math.abs(mpArea([q])) > 0.5) chunks.push(q);
+        }
+        for (const ch of chunks) {
+          const pcen = centroid(ch[0]);
+          const nearRow =
+            parcels
+              .filter((q) => q.valid)
+              .sort((a, b) => dist(centroid(a.ring), pcen) - dist(centroid(b.ring), pcen))[0]?.row ?? 0;
+          const front = rows[nearRow]?.front ?? frontages[0];
+          const cand = evaluateParcel(ch[0], front, buildingLines, frontages, roadLines, p, false, nearRow);
+          if (cand && cand.valid) {
+            parcels.push(cand);
+            created++;
+            changed = true;
+          }
+        }
+      }
+      if (changed) continue;
+
+      // 2) Kalan küçük parçalar koşulları bozmadan komşu parsellere eklenir.
+
       for (const raw of pieces) {
         for (const piece of slicePiece(raw)) {
           const pieceArea = Math.abs(mpArea([piece]));
