@@ -1615,6 +1615,7 @@ function weldRearCorners(
   frontages: Pt[][],
   roadLines: Pt[][],
   p: Params,
+  adaVertices: Pt[] = [],
 ): { count: number; rowsOut: Parcel[][]; cuts: CutDef[][]; maxGap: number } | null {
   const [sa, sb] = solutions;
   const cutsA = sa.cuts.map((c) => ({ ...c }));
@@ -1640,7 +1641,10 @@ function weldRearCorners(
     if (bi < 0 || bd > p.tolerance) return;
     usedB.add(bi);
     const pb = rearB[bi]!;
-    const shared: Pt = [(pa[0] + pb[0]) / 2, (pa[1] + pb[1]) / 2];
+    let shared: Pt = [(pa[0] + pb[0]) / 2, (pa[1] + pb[1]) / 2];
+    // Ada kırık noktası tolerans içindeyse ortak nokta olarak O kullanılır.
+    const av = nearestAdaVertex(shared, adaVertices, p.tolerance);
+    if (av) shared = av.pt;
     const apply = (c: CutDef) => {
       c.dir = norm(sub(shared, c.pt));
       c.paired = true;
@@ -2029,6 +2033,7 @@ export function optimizeBlock(
       frontages,
       roadLines,
       p,
+      ring,
     );
     if (weld) {
       toleranceUsed = Math.max(toleranceUsed, weld.count);
@@ -2044,6 +2049,21 @@ export function optimizeBlock(
   }
 
 
+
+  // ADA AYRIM KIRIK NOKTALARI: tolerans içinde yaklaşan parsel köşeleri ada
+  // kırık noktasının tam üzerine taşınır; alan yol kenarı kaydırılarak dengelenir.
+  solutions.forEach((s, i) => {
+    if (!s) return;
+    const snap = snapRowToAdaVertices(rows[i], s, ring, buildingLines, frontages, roadLines, p, i);
+    if (!snap) return;
+    s.parcels = snap.parcels;
+    s.cuts = snap.cuts;
+    s.validCount = snap.parcels.filter((x) => x.valid).length;
+    toleranceUsed = Math.max(toleranceUsed, snap.count);
+    log.push(
+      `Sıra ${i + 1}: ${snap.count} parsel köşesi ada kırık noktası ile birleştirildi (en büyük açıklık ${snap.maxGap.toFixed(2)} m ≤ ${p.tolerance.toFixed(2)} m); alan yol kenarı kaydırılarak dengelendi.`,
+    );
+  });
 
   const parcels: Parcel[] = [];
   solutions.forEach((s) => s && parcels.push(...s.parcels));
