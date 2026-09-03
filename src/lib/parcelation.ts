@@ -1950,7 +1950,6 @@ export function optimizeBlock(
     const evaluateParallel = (k: number, tune: boolean): Cand | null => {
       const { rows: rws, mid } = parallelSplitAt(k);
       const c = evalRows(rws, mid, Math.abs(k - 0.5), tune);
-      if (process.env['PARC_DEBUG']) console.log('[paralel]', k, 'sıra', rws.length, rws.map(r=>Math.round(ringArea(r.ring))), 'geçerli', c?.valid, 'skor', c?.score?.toFixed(0));
       if (c) c.parallel = true;
       if (c) c.log = [`Uzun yol cephesine paralel ofset (ada genişliğinin %${Math.round(k * 100)}'i) ile bölündü.`, ...c.log];
       return c;
