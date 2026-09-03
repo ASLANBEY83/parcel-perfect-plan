@@ -20,6 +20,7 @@ import {
   perp,
   pointInRing,
   polylineLength,
+  bufferPolyline,
   principalAngle,
   ringArea,
   stddev,
@@ -1842,8 +1843,59 @@ export function optimizeBlock(
     return { rows: rws, mid };
   };
 
+  /**
+   * Oval/elips adalar için: uzun yol cephesine PARALEL, ada genişliğinin yarısı
+   * kadar içeriden ofsetlenmiş bölme hattı üretir (`k` = 0.5 varsayılan).
+   */
+  const parallelSplitAt = (k: number) => {
+    if (frontages.length < 2) return { rows: [] as { ring: Ring; front: Pt[] }[], mid: [] as Pt[] };
+    const sorted = [...frontages].sort((a, b) => polylineLength(b) - polylineLength(a));
+    const A = sorted[0];
+    const B = sorted[1];
+    const LA = polylineLength(A) || 1;
+    // Ada genişliği: uzun cephe boyunca örneklenen noktaların karşı cepheye uzaklığı.
+    const n = Math.max(8, Math.min(80, Math.round(LA / 3)));
+    // Her örnek noktada ada içine bakan normal ve o normal boyunca ada genişliği ölçülür.
+    const inwardNormal = (pt: Pt, dir: Pt): Pt | null => {
+      const nn = norm(perp(norm(dir)));
+      if (pointInRing(add(pt, mul(nn, 0.3)), ring)) return nn;
+      const fl = mul(nn, -1);
+      if (pointInRing(add(pt, mul(fl, 0.3)), ring)) return fl;
+      return null;
+    };
+    const widthAlong = (pt: Pt, nn: Pt): number => {
+      let t = 0.3;
+      const step = 0.5;
+      while (t < 1000 && pointInRing(add(pt, mul(nn, t + step)), ring)) t += step;
+      return t;
+    };
+    const samples: { pt: Pt; nn: Pt; w: number }[] = [];
+    for (let i = 0; i <= n; i++) {
+      const { pt, dir } = atChainage(A, (LA * i) / n);
+      const nn = inwardNormal(pt, dir);
+      if (!nn) continue;
+      samples.push({ pt, nn, w: widthAlong(pt, nn) });
+    }
+    if (samples.length < 2) return { rows: [] as { ring: Ring; front: Pt[] }[], mid: [] as Pt[] };
+    const wsArr = samples.map((s) => s.w).sort((a, b) => a - b);
+    const medianW = wsArr[Math.floor(wsArr.length / 2)] || 0;
+    if (!(medianW > 0)) return { rows: [] as { ring: Ring; front: Pt[] }[], mid: [] as Pt[] };
+    const d = medianW * k;
+    const mid: Pt[] = samples.map((s) => add(s.pt, mul(s.nn, d)) as Pt);
+    // Uzun cepheye paralel bant: ada, cephenin d kalınlıklı bandı ile ikiye ayrılır.
+    // Bu yöntem oval/elips (eğri) cephelerde de gerçek paralel bölme üretir.
+    const band = bufferPolyline(A, d);
+    const ra = largestPoly(mpIntersect(blockMp, band));
+    const rb = largestPoly(mpDifference(blockMp, band));
+    const rws: { ring: Ring; front: Pt[] }[] = [];
+    if (ra) rws.push({ ring: ensureCCW(ra[0]), front: A });
+    if (rb) rws.push({ ring: ensureCCW(rb[0]), front: B });
+    return { rows: rws, mid };
+  };
+
   // Bir parsel sırasının teknik olarak mümkün olması için gereken en küçük derinlik.
   const minRowDepth = p.frontSetback + p.minBuildingDepth + p.rearSetback;
+
 
   if (frontages.length >= 2) {
     // 1) Sıra derinliği (orta hat konumu) hızlı taranır.
@@ -1854,9 +1906,14 @@ export function optimizeBlock(
       valid: number;
       score: number;
       log: string[];
+      parallel?: boolean;
     };
-    const evaluate = (ws: number[], tune: boolean): Cand | null => {
-      const { rows: rws, mid } = splitAt(ws);
+    const evalRows = (
+      rws: { ring: Ring; front: Pt[] }[],
+      mid: Pt[],
+      centerDev: number,
+      tune: boolean,
+    ): Cand | null => {
       if (rws.length < 2) return null;
       // Ada ancak koşullar sağlanırsa ikiye bölünür: her iki sıra da min derinlik ve
       // min parsel alanını taşıyabilecek büyüklükte olmalı.
@@ -1872,8 +1929,6 @@ export function optimizeBlock(
         localLog.push(...res.log);
         return res.best;
       });
-      // Ada mümkün mertebe ortadan ikiye bölünsün: orta hattın 0.5'ten sapması cezalandırılır.
-      const centerDev = ws.reduce((a, w) => a + Math.abs(w - 0.5), 0) / ws.length;
       return {
         rows: rws,
         mid,
@@ -1883,6 +1938,24 @@ export function optimizeBlock(
         log: localLog,
       };
     };
+
+    const evaluate = (ws: number[], tune: boolean): Cand | null => {
+      const { rows: rws, mid } = splitAt(ws);
+      // Ada mümkün mertebe ortadan ikiye bölünsün: orta hattın 0.5'ten sapması cezalandırılır.
+      const centerDev = ws.reduce((a, w) => a + Math.abs(w - 0.5), 0) / ws.length;
+      return evalRows(rws, mid, centerDev, tune);
+    };
+
+    /** Uzun cepheye paralel, ada genişliğinin `k` katı ofsetli bölme değerlendirmesi. */
+    const evaluateParallel = (k: number, tune: boolean): Cand | null => {
+      const { rows: rws, mid } = parallelSplitAt(k);
+      const c = evalRows(rws, mid, Math.abs(k - 0.5), tune);
+      if (process.env['PARC_DEBUG']) console.log('[paralel]', k, 'sıra', rws.length, rws.map(r=>Math.round(ringArea(r.ring))), 'geçerli', c?.valid, 'skor', c?.score?.toFixed(0));
+      if (c) c.parallel = true;
+      if (c) c.log = [`Uzun yol cephesine paralel ofset (ada genişliğinin %${Math.round(k * 100)}'i) ile bölündü.`, ...c.log];
+      return c;
+    };
+
 
     const better = (a: Cand | null, b: Cand | null) =>
       !a ? b : !b ? a : b.valid > a.valid || (b.valid === a.valid && b.score > a.score) ? b : a;
@@ -1937,7 +2010,38 @@ export function optimizeBlock(
       const b = better(s.c, tuned);
       if (b) finals.push(b);
     }
-    finals.sort((x, y) => y.valid - x.valid || y.score - x.score);
+    // 3b) Oval/elips adalar: uzun yol cephesine paralel ofset bölme (ada genişliğinin yarısı).
+    //     Önce tam yarı (0.5) denenir, gerekirse küçük sapmalarla iyileştirilir.
+    // Eğrisel (oval/elips) cephelerde paralel ofset bölme denenir; düz cephelerde
+    // klasik bölme yeterli olduğundan bu ağır arama atlanır.
+    const curvature = (() => {
+      if (frontages.length < 2) return 0;
+      const L = [...frontages].sort((a, b) => polylineLength(b) - polylineLength(a))[0];
+      if (L.length < 3) return 0;
+      const a = L[0];
+      const b = L[L.length - 1];
+      let m = 0;
+      for (const q of L) m = Math.max(m, nearestOnPolyline(q, [a, b]).d);
+      return m;
+    })();
+    const ks = curvature > 1.5 ? [0.5, 0.46, 0.54, 0.42, 0.58] : [];
+    if (ks.length) log.push(`Ada cephesi eğrisel (sapma ${curvature.toFixed(1)} m): uzun cepheye paralel ofset bölme adayları da denendi.`);
+    for (const k of ks) {
+      const c = evaluateParallel(k, true);
+      if (c) finals.push(c);
+      if (k === 0.5 && c && c.sols.every((s) => s && s.validCount > 0 && s.parcels.length === s.validCount)) break;
+    }
+    // Tüm parsellerin koşulları sağlaması önceliklidir: geçersiz parsel sayısı az olan öne alınır.
+    const invalidOf = (c: Cand) => c.sols.reduce((a, s) => a + ((s?.parcels.length ?? 0) - (s?.validCount ?? 0)), 0);
+    // Eşit koşullarda (geçersiz ve geçerli parsel sayısı aynı) uzun cepheye paralel ofset bölme tercih edilir.
+    finals.sort(
+      (x, y) =>
+        invalidOf(x) - invalidOf(y) ||
+        y.valid - x.valid ||
+        Number(Boolean(y.parallel)) - Number(Boolean(x.parallel)) ||
+        y.score - x.score,
+    );
+
     const topValid = finals[0]?.valid ?? 0;
     const equals = finals.filter((c) => c.valid === topValid);
     const variant = opts.variant ?? 0;
@@ -2205,6 +2309,47 @@ export function optimizeBlock(
   }
 
 
+
+  // KOŞUL GARANTİSİ: geçerli bir düzen bulunduğunda, koşulları sağlamayan artık
+  // parseller ya komşusuna birleştirilir ya da parsel olarak üretilmez (artık alan).
+  {
+    const validCount = parcels.filter((q) => q.valid).length;
+    const bad = parcels.filter((q) => !q.valid);
+    if (bad.length && validCount >= 2 && validCount / parcels.length >= 0.5) {
+      let merged = 0;
+      let dropped = 0;
+      for (const q of bad) {
+        if (!parcels.includes(q)) continue;
+        const front = rows[q.row]?.front ?? frontages[0];
+        // 1) Aynı sıradaki komşu parsellerle birleştirmeyi dene.
+        const neighbours = parcels
+          .filter((o) => o !== q && o.row === q.row && o.valid)
+          .sort((a, b) => dist(centroid(a.ring), centroid(q.ring)) - dist(centroid(b.ring), centroid(q.ring)));
+        let done = false;
+        for (const o of neighbours.slice(0, 2)) {
+          const u = largestPoly(mpUnion([[q.ring]], [[o.ring]]));
+          if (!u) continue;
+          const cand = evaluateParcel(u[0], front, buildingLines, frontages, roadLines, p, q.corner || o.corner, q.row);
+          if (cand && cand.valid) {
+            parcels.splice(parcels.indexOf(o), 1, cand);
+            parcels.splice(parcels.indexOf(q), 1);
+            merged++;
+            done = true;
+            break;
+          }
+        }
+        // 2) Birleştirilemiyorsa parsel olarak üretilmez; alan artık (tampon) alan olur.
+        if (!done) {
+          parcels.splice(parcels.indexOf(q), 1);
+          dropped++;
+        }
+      }
+      if (merged || dropped)
+        log.push(
+          `Koşul garantisi: ${merged} artık parsel komşusuna birleştirildi, ${dropped} artık şerit parsel olarak üretilmedi; üretilen tüm parseller imar koşullarını sağlıyor.`,
+        );
+    }
+  }
 
   // Numaralandırma: kuzeybatı köşedeki parselden başlayıp saat ibresi yönünde
   {

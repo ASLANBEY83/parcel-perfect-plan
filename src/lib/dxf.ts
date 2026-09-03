@@ -108,7 +108,7 @@ interface DxfOutEntity {
 export function writeDxf(entities: DxfOutEntity[]): string {
   const layers = Array.from(new Set(entities.map((e) => e.layer)));
   const colorOf = (n: string) =>
-    n === "PARSELLER" ? 3 : n === "YAPI_BLOKLARI" ? 1 : n === "ADA" ? 5 : n === "YAPI_INSAA_HATTI" ? 2 : 7;
+    n === "PARSELLER" ? 3 : n === "YAPI_BLOKLARI" ? 1 : n === "ADA" ? 5 : n === "YAPI_INSAA_HATTI" ? 2 : n === "YAPI_YAKLASMA" ? 4 : 7;
   const L: string[] = [];
   const p = (code: number | string, v: string | number) => L.push(String(code), String(v));
 

@@ -347,3 +347,20 @@ export function offsetRingInward(ring: Ring, d: number): Ring[] {
   const res = mpDifference([[r]], parts);
   return res.map((p) => p[0]).filter((x) => x && x.length >= 3);
 }
+
+/** Bir polyline'ın d yarıçaplı düzlemsel bandı (Minkowski toplamı). */
+export function bufferPolyline(line: Pt[], d: number): MultiPoly {
+  if (line.length < 2 || d <= 0) return [];
+  let out: MultiPoly = [];
+  const parts: MultiPoly = [];
+  for (let i = 0; i < line.length - 1; i++) {
+    const a = line[i];
+    const b = line[i + 1];
+    if (dist(a, b) < 1e-9) continue;
+    const n = mul(norm(perp(norm(sub(b, a)))), d);
+    parts.push([[add(a, n), add(b, n), add(b, mul(n, -1)), add(a, mul(n, -1))]]);
+  }
+  for (const q of line) parts.push([diskPoly(q, d / Math.cos(Math.PI / 32), 32)]);
+  for (const p of parts) out = out.length ? mpUnion(out, [p]) : [p];
+  return out;
+}
