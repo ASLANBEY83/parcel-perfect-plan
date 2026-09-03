@@ -26,7 +26,8 @@ function check(label: string, ring: Ring, ov: Partial<Params>) {
       if (Math.abs(dot(a, c)) > 0.01) ok = false;
     }
     if (dist(r[0], r[1]) < 1e-6) ok = false;
-    if (ok) rects++; else bad++;
+    if (ok) rects++;
+    else bad++;
     if (q.envelope) {
       const out = mpArea(mpDifference([[r]], [[q.envelope]]));
       if (out > 0.05) {
