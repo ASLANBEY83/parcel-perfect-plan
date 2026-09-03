@@ -106,6 +106,8 @@ interface CutDef {
   tangent: Pt; // yol cephesi doğrultusu (chainage artış yönü)
   s: number; // chainage
   paired: boolean;
+  /** Ortak köşe noktası (sırt sırta parsel köşesi birleştirildiyse). */
+  shared?: Pt;
 }
 
 /** Kesme çizgisinin, chainage artış yönünü gösteren normali. */
@@ -1118,28 +1120,38 @@ function equalizeRowCuts(
 
   const L = polylineLength(frontLine);
   const out = cuts.map((c) => ({ ...c }));
-  // Tampon parsel = son ara parsel; ondan öncekiler hedefe eşitlenir.
+
+  /** Kesimi verilen chainage'e taşır; ortak köşe varsa hat yönü o noktaya bakar. */
+  const moveCut = (c: CutDef, s: number) => {
+    const at = atChainage(frontLine, s);
+    c.s = s;
+    c.pt = at.pt;
+    c.tangent = at.dir;
+    c.dir = c.shared ? norm(sub(c.shared, at.pt)) : perp(at.dir);
+  };
+  /** İki kesim arasındaki parselin GERÇEK alanı (buildRowParcels ile aynı kırpma). */
+  const areaBetween = (a: CutDef | null, b: CutDef | null): number => {
+    let r = rowRing;
+    if (a) r = clipHalfPlane(r, a.pt, cutNormal(a));
+    if (r.length >= 3 && b) r = clipHalfPlane(r, b.pt, mul(cutNormal(b), -1));
+    return r.length >= 3 ? ringArea(r) : 0;
+  };
+
+  // Tampon parsel = son ara parsel; ondan öncekiler tam sayı hedefe eşitlenir.
   for (let i = 1; i <= n - 3; i++) {
     const prev = out[i - 1];
     const cur = out[i];
     const next = out[i + 1];
-    // Ortak köşeye bağlı kesim taşınamaz; onun soluna düşen parsel küsuratı taşır.
-    if (cur.paired) continue;
-    const base = areaBeforeChainage(rowRing, frontLine, prev.s);
     let lo = prev.s + 0.5;
     let hi = Math.min(next ? next.s - 0.5 : L - 0.5, L - 0.5);
     if (hi <= lo) continue;
     for (let it = 0; it < 40; it++) {
       const m = (lo + hi) / 2;
-      if (areaBeforeChainage(rowRing, frontLine, m) - base < target) lo = m;
+      moveCut(cur, m);
+      if (areaBetween(prev, cur) < target) lo = m;
       else hi = m;
     }
-    const s = (lo + hi) / 2;
-    const at = atChainage(frontLine, s);
-    cur.s = s;
-    cur.pt = at.pt;
-    cur.dir = perp(at.dir);
-    cur.tangent = at.dir;
+    moveCut(cur, (lo + hi) / 2);
   }
   return { cuts: out, target };
 }
@@ -1747,6 +1759,7 @@ export function optimizeBlock(
             // Yola dik gelme şartı, ortak köşe noktası için istisna kabul edilir.
             c.dir = norm(sub(pr.shared, pt));
             c.paired = true;
+            c.shared = pr.shared;
           };
           setCut(0, pr.ia, pr.da);
           setCut(1, pr.ib, pr.db);
