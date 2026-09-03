@@ -48,17 +48,42 @@ export function closeRing(r: Ring): Ring {
   if (r.length < 3) return r;
   const first = r[0];
   const last = r[r.length - 1];
-  return dist(first, last) < 1e-9 ? r : [...r, first];
+  // Turf/GeoJSON ilk ve son noktanın BİREBİR eşit olmasını ister; yaklaşık eşitlik
+  // ("First and last Position are not equivalent") hatasına yol açar.
+  if (first[0] === last[0] && first[1] === last[1]) return r;
+  if (dist(first, last) < 1e-6) return [...r.slice(0, -1), [first[0], first[1]] as Pt];
+  return [...r, [first[0], first[1]] as Pt];
+}
+
+/** Halkayı Turf için temizler: geçersiz/yinelenen noktaları atar, birebir kapatır. */
+function sanitizeRing(r: Ring): Ring | null {
+  const pts: Ring = [];
+  for (const c of r) {
+    if (!Number.isFinite(c[0]) || !Number.isFinite(c[1])) continue;
+    const prev = pts[pts.length - 1];
+    if (prev && dist(prev, c) < 1e-9) continue;
+    pts.push([c[0], c[1]]);
+  }
+  while (pts.length > 1 && dist(pts[0], pts[pts.length - 1]) < 1e-9) pts.pop();
+  if (pts.length < 3) return null;
+  return closeRing(pts);
 }
 
 /** MultiPoly -> GeoJSON Feature (Turf girdisi). */
 export function toFeature(mp: MultiPoly): Feature<Polygon | MultiPolygon> | null {
   const coords = mp
-    .map((p) => p.map((r) => closeRing(r)).filter((r) => r.length >= 4))
-    .filter((p) => p.length > 0);
+    .map((poly) => poly.map((r) => sanitizeRing(r)).filter((r): r is Ring => !!r && r.length >= 4))
+    .filter((poly) => poly.length > 0);
   if (!coords.length) return null;
-  return coords.length === 1 ? turf.polygon(coords[0] as number[][][]) : turf.multiPolygon(coords as number[][][][]);
+  try {
+    return coords.length === 1
+      ? turf.polygon(coords[0] as number[][][])
+      : turf.multiPolygon(coords as number[][][][]);
+  } catch {
+    return null;
+  }
 }
+
 
 /** Turf sonucunu MultiPoly'ye çevirir (kapanış noktası atılır). */
 export function fromFeature(feat: Feature<Polygon | MultiPolygon> | null | undefined): MultiPoly {
