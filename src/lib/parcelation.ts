@@ -1192,7 +1192,7 @@ export function optimizeBlock(
   log.push(`${frontages.length} yol cephesi belirlendi.`);
 
   // Ada sınırlarının tamamı yola cephelidir: her ada kenarından frontSetback kadar ön çekme uygulanır.
-  const roadLines: Pt[][] = [[...ring, ring[0]]];
+  const roadLines: Pt[][] = roadChains(ring);
 
   const blockMp: MultiPoly = [[ring]];
   let rows: { ring: Ring; front: Pt[] }[] = [];
