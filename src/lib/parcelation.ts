@@ -135,7 +135,9 @@ function equalAreaChainages(ring: Ring, line: Pt[], n: number, wStart = 1, wEnd 
     cum.push({ s, a: before.length >= 3 ? ringArea(before) : 0 });
   }
   // Köşe parseller iki yoldan da 5 m çekme yaptığı için ek alan payı alabilir.
-  const w = Array.from({ length: n }, (_, i) => (n > 1 && i === 0 ? wStart : n > 1 && i === n - 1 ? wEnd : 1));
+  const w = Array.from({ length: n }, (_, i) =>
+    n > 1 && i === 0 ? wStart : n > 1 && i === n - 1 ? wEnd : 1,
+  );
   const wSum = w.reduce((a, b) => a + b, 0);
   const cumW: number[] = [];
   let acc = 0;
@@ -160,7 +162,11 @@ function equalAreaChainages(ring: Ring, line: Pt[], n: number, wStart = 1, wEnd 
   return out;
 }
 
-function edgeLengthOnLines(ring: Ring, lines: Pt[][], tol = FRONTAGE_DETECTION.EDGE_ON_LINE_TOLERANCE): number {
+function edgeLengthOnLines(
+  ring: Ring,
+  lines: Pt[][],
+  tol = FRONTAGE_DETECTION.EDGE_ON_LINE_TOLERANCE,
+): number {
   let total = 0;
   for (let i = 0; i < ring.length; i++) {
     const a = ring[i];
@@ -230,7 +236,8 @@ function perpendicularRoadLength(ring: Ring, roadLines: Pt[][], mainFrontages: P
     if (!onBoundary) continue;
     // Ana yol cephesinde zaten sayılan kenarları tekrar sayma
     const onMain = mainFrontages.some(
-      (l) => l.length >= 2 && nearestOnPolyline(m, l).d < tol && nearestOnPolyline(a, l).d < tol * 1.5,
+      (l) =>
+        l.length >= 2 && nearestOnPolyline(m, l).d < tol && nearestOnPolyline(a, l).d < tol * 1.5,
     );
     if (onMain) continue;
     const dirEdge = norm(sub(b, a));
@@ -247,8 +254,6 @@ function perpendicularRoadLength(ring: Ring, roadLines: Pt[][], mainFrontages: P
   }
   return total;
 }
-
-
 
 export type EdgeKind = "front" | "side" | "rear";
 
@@ -284,7 +289,9 @@ function classifyEdge(a: Pt, b: Pt, frontLines: Pt[][], roadFrontages: Pt[][]): 
     }
   }
   if (!best.dir) return "side";
-  return Math.abs(dot(dirEdge, best.dir)) >= EDGE_CLASSIFICATION.REAR_EDGE_PARALLEL_MIN ? "rear" : "side";
+  return Math.abs(dot(dirEdge, best.dir)) >= EDGE_CLASSIFICATION.REAR_EDGE_PARALLEL_MIN
+    ? "rear"
+    : "side";
 }
 
 /**
@@ -292,7 +299,12 @@ function classifyEdge(a: Pt, b: Pt, frontLines: Pt[][], roadFrontages: Pt[][]): 
  * kullanıcının girdiği runtime çekme mesafesi uygulanır:
  * yol cephesi → frontSetback, yan kenar → sideSetback, arka kenar → rearSetback.
  */
-export function buildEnvelope(ring: Ring, frontLines: Pt[][], p: Params, roadFrontages: Pt[][] = []): Ring {
+export function buildEnvelope(
+  ring: Ring,
+  frontLines: Pt[][],
+  p: Params,
+  roadFrontages: Pt[][] = [],
+): Ring {
   const r = ensureCCW(ring);
   return clipInset(r, (i) => {
     const a = r[i];
@@ -301,8 +313,6 @@ export function buildEnvelope(ring: Ring, frontLines: Pt[][], p: Params, roadFro
     return kind === "front" ? p.frontSetback : kind === "rear" ? p.rearSetback : p.sideSetback;
   });
 }
-
-
 
 function clipInset(r: Ring, distFor: (i: number) => number): Ring {
   let cur = r;
@@ -489,7 +499,6 @@ function makeBuilding(
     if (vMax - vBase < p.minBuildingDepth - 1e-4) return null;
     let v0 = vBase;
 
-
     // Zarf köşelerinin v seviyeleri: extent fonksiyonu bu seviyeler arasında
     // doğrusaldır, bu yüzden en dar kesişim daima bir köşe seviyesinde ya da
     // bandın uçlarında oluşur.
@@ -548,7 +557,6 @@ function makeBuilding(
       return { ring, area: w * h, front: w, depth: h };
     };
 
-
     // Zarfı [vA,vB] × [uLo,uHi] bandına kırpar (teğetlik için öne uzatmada kullanılır).
     const clipBand = (vA: number, vB: number, uLo: number, uHi: number) => {
       const clip = (poly: Pt[], keep: (q: Pt) => boolean, at: (a: Pt, b: Pt) => Pt): Pt[] => {
@@ -572,13 +580,29 @@ function makeBuilding(
         return [uu, a[1] + (b[1] - a[1]) * t];
       };
       let poly: Pt[] = f.slice();
-      poly = clip(poly, (q) => q[1] >= vA, (a, b) => cutV(a, b, vA));
+      poly = clip(
+        poly,
+        (q) => q[1] >= vA,
+        (a, b) => cutV(a, b, vA),
+      );
       if (poly.length < 3) return null;
-      poly = clip(poly, (q) => q[1] <= vB, (a, b) => cutV(a, b, vB));
+      poly = clip(
+        poly,
+        (q) => q[1] <= vB,
+        (a, b) => cutV(a, b, vB),
+      );
       if (poly.length < 3) return null;
-      poly = clip(poly, (q) => q[0] >= uLo, (a, b) => cutU(a, b, uLo));
+      poly = clip(
+        poly,
+        (q) => q[0] >= uLo,
+        (a, b) => cutU(a, b, uLo),
+      );
       if (poly.length < 3) return null;
-      poly = clip(poly, (q) => q[0] <= uHi, (a, b) => cutU(a, b, uHi));
+      poly = clip(
+        poly,
+        (q) => q[0] <= uHi,
+        (a, b) => cutU(a, b, uHi),
+      );
       if (poly.length < 3) return null;
       return poly;
     };
@@ -600,7 +624,14 @@ function makeBuilding(
         if (bandExtent[1] - bandExtent[0] < p.minBuildingFront - 1e-9) continue;
         for (const off of [0, -1, 1, -2, 2, -3, 3, -50, 50]) {
           // Tüm kütleler dik açılı dikdörtgendir (yamuk/serbest form üretilmez).
-          const cand: { ring: Ring; area: number; front: number; depth: number; taper: number; irregular?: boolean }[] = [];
+          const cand: {
+            ring: Ring;
+            area: number;
+            front: number;
+            depth: number;
+            taper: number;
+            irregular?: boolean;
+          }[] = [];
           const widths = [p.minBuildingArea / h, maxByTaks / h, Infinity];
           const seen = new Set<number>();
           for (const w of widths) {
@@ -611,7 +642,6 @@ function makeBuilding(
             seen.add(key);
             cand.push({ ...rect, taper: 0 });
           }
-
 
           for (const q of cand) {
             if (q.area < p.minBuildingArea - 1e-6 || q.area > maxByTaks + 1e-6) continue;
@@ -632,7 +662,10 @@ function makeBuilding(
                 const sm: Pt = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
                 for (const bl of buildingLines) {
                   if (bl.length < 2) continue;
-                  m = Math.min(m, Math.max(nearestOnPolyline(sm, bl).d, nearestOnPolyline(a, bl).d * 0.5));
+                  m = Math.min(
+                    m,
+                    Math.max(nearestOnPolyline(sm, bl).d, nearestOnPolyline(a, bl).d * 0.5),
+                  );
                 }
               }
               if (m < 4) sideBonus = (4 - m) * 60;
@@ -647,7 +680,6 @@ function makeBuilding(
               (q.irregular ? 60 : 0) +
               sideBonus -
               slide * 200;
-
 
             // Pahalı geometrik doğrulamalar yalnızca daha iyi adaylarda yapılır.
             if (score > bestScore && respectsSetback(q.ring) && cornerFrontsOk(q.ring)) {
@@ -682,7 +714,12 @@ function makeBuilding(
           const area = Math.abs(ringArea(ring));
           const e = extentAt(f, vTry);
           const front = e ? Math.min(e[1], bestMeta.uHi) - Math.max(e[0], bestMeta.uLo) : 0;
-          if (area <= maxByTaks + 1e-6 && front >= p.minBuildingFront - 1e-6 && respectsSetback(ring) && cornerFrontsOk(ring)) {
+          if (
+            area <= maxByTaks + 1e-6 &&
+            front >= p.minBuildingFront - 1e-6 &&
+            respectsSetback(ring) &&
+            cornerFrontsOk(ring)
+          ) {
             fixed = { ring, area, front, depth: bestMeta.v1 - vTry };
             hi = vTry;
           } else {
@@ -700,9 +737,7 @@ function makeBuilding(
     }
 
     return best ? { ...best, score: bestScore } : null;
-
   };
-
 
   let winner: { ring: Ring; area: number; front: number; depth: number } | null = null;
   let winnerScore = -Infinity;
@@ -726,10 +761,6 @@ function makeBuilding(
   if (winner) return winner;
   return { ring: null, area: 0, front: 0, depth: 0 };
 }
-
-
-
-
 
 function frontEdgeLength(ring: Ring, origin: Pt, u: Pt): number {
   const f = ring.map((q) => toFrame(q, origin, u));
@@ -835,9 +866,10 @@ function buildRowParcels(
     // Köşe parselde ikinci (yan) yol cephesi de yola cephe ölçümüne katılır.
     const sideRoadFrontage = corner ? perpendicularRoadLength(ring, roadLines, allFrontages) : 0;
     const frontage = mainFrontage + sideRoadFrontage;
-    const bld = envelope.length >= 3
-      ? makeBuilding(ring, envelope, frontLine, buildingLines, area, p, corner, roadLines)
-      : { ring: null, area: 0, front: 0, depth: 0 };
+    const bld =
+      envelope.length >= 3
+        ? makeBuilding(ring, envelope, frontLine, buildingLines, area, p, corner, roadLines)
+        : { ring: null, area: 0, front: 0, depth: 0 };
     // Derinlik daima ANA yol cephesi üzerinden ölçülür (ikinci cephe derinliği azaltmaz).
     const depth = area / Math.max(mainFrontage, 1e-6);
 
@@ -870,7 +902,6 @@ function buildRowParcels(
         fail(
           `Ön/yan/arka çekme (${p.frontSetback}/${p.sideSetback}/${p.rearSetback} m) nedeniyle yapı yaklaşma sınırı oluşmuyor`,
         );
-
       else if (usableDepth < requiredDepth - 1e-6)
         fail(
           `Yapılaşabilir minimum derinlik sağlanamıyor: kullanılabilir ${usableDepth.toFixed(2)} m < gerekli ${requiredDepth.toFixed(2)} m (ön ${p.frontSetback} + arka ${p.rearSetback} + yapı ${p.minBuildingDepth})`,
@@ -881,9 +912,12 @@ function buildRowParcels(
         );
       else fail("Kurallara uygun yapı bloğu oluşturulamadı");
     } else {
-      if (bld.area < p.minBuildingArea) fail(`Yapı alanı ${bld.area.toFixed(1)} m² < ${p.minBuildingArea} m²`);
-      if (bld.front < p.minBuildingFront) fail(`Yapı cephesi ${bld.front.toFixed(2)} m < ${p.minBuildingFront} m`);
-      if (bld.depth < p.minBuildingDepth - 1e-4) fail(`Yapı derinliği ${bld.depth.toFixed(2)} m < ${p.minBuildingDepth} m`);
+      if (bld.area < p.minBuildingArea)
+        fail(`Yapı alanı ${bld.area.toFixed(1)} m² < ${p.minBuildingArea} m²`);
+      if (bld.front < p.minBuildingFront)
+        fail(`Yapı cephesi ${bld.front.toFixed(2)} m < ${p.minBuildingFront} m`);
+      if (bld.depth < p.minBuildingDepth - 1e-4)
+        fail(`Yapı derinliği ${bld.depth.toFixed(2)} m < ${p.minBuildingDepth} m`);
       if (bld.area / area > p.taks + 1e-6) fail(`TAKS ${(bld.area / area).toFixed(3)} > ${p.taks}`);
     }
     parcels.push({
@@ -923,7 +957,6 @@ function areaSpread(parcels: Parcel[]): number {
   return mean < 1e-6 ? 0 : stddev(areas) / mean; // bağıl sapma
 }
 
-
 function scoreSolution(parcels: Parcel[], p: Params, tolUsed: number): number {
   const valid = parcels.filter((x) => x.valid);
   const inRange = parcels.filter((x) => x.area >= p.minArea && x.area <= p.maxArea).length;
@@ -944,7 +977,6 @@ function scoreSolution(parcels: Parcel[], p: Params, tolUsed: number): number {
     tolUsed * W.TOLERANCE_USED_PENALTY
   );
 }
-
 
 function solveRow(
   rowRing: Ring,
@@ -970,8 +1002,10 @@ function solveRow(
   const capWithCorners = Math.floor((frontLen - minWidthCorner) / minWidthMid) + 1;
   const widthCapacity = Math.max(1, capByMid, capWithCorners);
   const nMin = Math.max(1, Math.floor(area / p.maxArea) - 1);
-  const nMax = Math.max(nMin, Math.min(Math.ceil(area / p.minArea) + 3, Math.max(1, widthCapacity)));
-
+  const nMax = Math.max(
+    nMin,
+    Math.min(Math.ceil(area / p.minArea) + 3, Math.max(1, widthCapacity)),
+  );
 
   const log: string[] = [];
   let best: RowSolution | null = null;
@@ -983,7 +1017,16 @@ function solveRow(
         const { pt, dir } = atChainage(frontLine, s);
         return { pt, dir: perp(dir), tangent: dir, s, paired: false };
       });
-      const parcels = buildRowParcels(rowRing, frontLine, cuts, buildingLines, allFrontages, roadLines, p, rowIndex);
+      const parcels = buildRowParcels(
+        rowRing,
+        frontLine,
+        cuts,
+        buildingLines,
+        allFrontages,
+        roadLines,
+        p,
+        rowIndex,
+      );
       const validCount = parcels.filter((x) => x.valid).length;
       return { parcels, cuts, score: scoreSolution(parcels, p, 0), validCount, log: [] };
     };
@@ -1011,7 +1054,6 @@ function solveRow(
       // kullanılıp yapı şartını sağlayan EN KÜÇÜK köşe parseli seçilir; böylece
       // kalan cephede daha fazla ara parsel üretilebilir.
       const grid = Array.from({ length: 33 }, (_, i) => 0.4 + i * 0.05); // 0.40 → 2.00
-
 
       const cornerOkAt = (i: 0 | 1, s: RowSolution) => {
         const ps = s.parcels;
@@ -1063,7 +1105,6 @@ function solveRow(
       if (better(finalStage1, stage1)) stage1 = finalStage1;
       if (better(stage1, sol)) sol = stage1;
 
-
       // 2. AŞAMA: köşeler sabitlendikten sonra ara parseller dengelenir.
       const starts: [number, number][] = [
         [wA, wB],
@@ -1110,7 +1151,10 @@ function solveRow(
     log.push(
       `Sıra ${rowIndex + 1}: ${n} parsel denendi → ${validCount}/${parcels.length} geçerli` +
         ` (köşe ${cornerValidCount(parcels)}/${parcels.filter((x) => x.corner).length})` +
-        (failing ? ` (örn. ${failing.issues.find((s) => !s.startsWith("ℹ")) ?? failing.issues[0]})` : "") + ".",
+        (failing
+          ? ` (örn. ${failing.issues.find((s) => !s.startsWith("ℹ")) ?? failing.issues[0]})`
+          : "") +
+        ".",
     );
     if (better(sol, best)) best = sol;
   }
@@ -1142,7 +1186,6 @@ function rearPointOfCut(rowRing: Ring, front: Pt[], c: CutDef): Pt | null {
   return best;
 }
 
-
 export function optimizeBlock(
   ring0: Ring,
   buildingLines: Pt[][],
@@ -1162,7 +1205,6 @@ export function optimizeBlock(
   let solutions: (RowSolution | null)[] = [];
   // Adayı ikiye bölen hattın kırık köşe noktaları (varsa)
   let splitMid: Pt[] = [];
-
 
   /**
    * Ada bölüm (orta) hattı: eğri yerine 2-3 kırıklı düzgün bir polyline.
@@ -1187,7 +1229,6 @@ export function optimizeBlock(
     if (rb) rws.push({ ring: ensureCCW(rb[0]), front: B });
     return { rows: rws, mid };
   };
-
 
   // Bir parsel sırasının teknik olarak mümkün olması için gereken en küçük derinlik.
   const minRowDepth = p.frontSetback + p.minBuildingDepth + p.rearSetback;
@@ -1233,7 +1274,6 @@ export function optimizeBlock(
 
     const better = (a: Cand | null, b: Cand | null) =>
       !a ? b : !b ? a : b.valid > a.valid || (b.valid === a.valid && b.score > a.score) ? b : a;
-
 
     const straight: { ws: number[]; c: Cand }[] = [];
     // Orta hat önce tam ortadan (0.5) denenir, gerekirse simetrik olarak uzaklaşılır.
@@ -1326,12 +1366,11 @@ export function optimizeBlock(
       log.push(
         `Ada'nın her kenarı yola cepheli kabul edildi; yol cephelerinden ${p.frontSetback} m, yan sınırlardan ${p.sideSetback} m, arka sınırlardan ${p.rearSetback} m yapı yaklaşma mesafesi uygulandı.`,
       );
-      log.push("Sıra derinliği ve köşe parsel genişlikleri, geçerli parsel sayısı en yüksek olacak şekilde optimize edildi.");
+      log.push(
+        "Sıra derinliği ve köşe parsel genişlikleri, geçerli parsel sayısı en yüksek olacak şekilde optimize edildi.",
+      );
       log.push(...best.log);
     }
-
-
-
   } else if (frontages.length === 1) {
     rows = [{ ring, front: frontages[0] }];
     const res = solveRow(ring, frontages[0], buildingLines, frontages, roadLines, p, 0);
@@ -1351,7 +1390,6 @@ export function optimizeBlock(
       log: ["Ada üzerinde yol cephesi belirlenemedi. Cepheleri manuel seçin."],
     };
   }
-
 
   // Sırt sırta sıralarda, orta hatta yakın karşılıklı köşeler 1 m toleransla tek noktaya indirgenir.
   let toleranceUsed = 0;
@@ -1379,7 +1417,13 @@ export function optimizeBlock(
       if (bi >= 0 && bd <= p.tolerance) {
         usedB.add(bi);
         const pb = rearB[bi]!;
-        pairs.push({ ia, ib: bi, shared: [(pa[0] + pb[0]) / 2, (pa[1] + pb[1]) / 2], da: 0, db: 0 });
+        pairs.push({
+          ia,
+          ib: bi,
+          shared: [(pa[0] + pb[0]) / 2, (pa[1] + pb[1]) / 2],
+          da: 0,
+          db: 0,
+        });
       }
     });
 
@@ -1403,7 +1447,16 @@ export function optimizeBlock(
           setCut(1, pr.ib, pr.db);
         }
         const rowsOut = [0, 1].map((i) =>
-          buildRowParcels(rows[i].ring, rows[i].front, cuts[i], buildingLines, frontages, roadLines, p, i),
+          buildRowParcels(
+            rows[i].ring,
+            rows[i].front,
+            cuts[i],
+            buildingLines,
+            frontages,
+            roadLines,
+            p,
+            i,
+          ),
         );
         const valid = rowsOut.reduce((a, ps) => a + ps.filter((x) => x.valid).length, 0);
         const score = rowsOut.reduce((a, ps) => a + scoreSolution(ps, p, pairs.length), 0);
@@ -1448,7 +1501,6 @@ export function optimizeBlock(
     }
   }
 
-
   const parcels: Parcel[] = [];
   solutions.forEach((s) => s && parcels.push(...s.parcels));
 
@@ -1465,7 +1517,8 @@ export function optimizeBlock(
     };
     // Ada sınırını saat ibresi yönünde sırala (y yukarı olduğu için negatif alan = saat yönü)
     let cw = ring.slice();
-    if (cw.length > 1 && cw[0][0] === cw[cw.length - 1][0] && cw[0][1] === cw[cw.length - 1][1]) cw.pop();
+    if (cw.length > 1 && cw[0][0] === cw[cw.length - 1][0] && cw[0][1] === cw[cw.length - 1][1])
+      cw.pop();
     let a2 = 0;
     for (let i = 0; i < cw.length; i++) {
       const p = cw[i];
@@ -1560,8 +1613,6 @@ export function optimizeBlock(
   }
 
   parcels.forEach((x, i) => (x.no = i + 1));
-
-
 
   let union: MultiPoly = [];
   for (const pc of parcels) union = mpUnion(union, [[pc.ring]]);
