@@ -75,7 +75,7 @@ function runBlock(name: string, ring: Ring, params: Params = P): BlockResult {
 }
 
 // ---------------- 1) GERÇEK DXF ----------------
-const dxfPath = process.argv[2] ?? "/mnt/user-uploads/350ADA.DXF";
+const dxfPath = process.argv[2] ?? "/tmp/user-uploads/350ADA.DXF";
 const doc = parseDxf(readFileSync(dxfPath, "latin1"));
 console.log("DXF katmanları:", doc.layers.join(", "));
 const adaLayer = doc.layers.find((l) => /ADA/i.test(l)) ?? doc.layers[0];

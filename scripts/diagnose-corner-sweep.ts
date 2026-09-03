@@ -9,7 +9,7 @@ import { ringArea, type Pt, type Ring } from "../src/lib/geo";
 const f = (v: number, d = 2) => Number(v.toFixed(d));
 const base: Params = { ...defaultParams, frontSetback: 5, sideSetback: 3, rearSetback: 3, minBuildingFront: 6 };
 
-const doc = parseDxf(readFileSync("/mnt/user-uploads/350ADA.DXF", "latin1"));
+const doc = parseDxf(readFileSync("/tmp/user-uploads/350ADA.DXF", "latin1"));
 const adaLayer = doc.layers.find((l) => /ADA/i.test(l)) ?? doc.layers[0];
 const real = polygonsOfLayer(doc, adaLayer).filter((r) => Math.abs(ringArea(r)) > 500)[0];
 

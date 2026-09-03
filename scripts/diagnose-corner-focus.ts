@@ -43,7 +43,7 @@ function run(name: string, ring: Ring, over: Partial<Params>) {
   }
 }
 
-const doc = parseDxf(readFileSync("/mnt/user-uploads/350ADA.DXF", "latin1"));
+const doc = parseDxf(readFileSync("/tmp/user-uploads/350ADA.DXF", "latin1"));
 const layer = doc.layers.find((l) => /ADA/i.test(l)) ?? doc.layers[0];
 const real = polygonsOfLayer(doc, layer).filter((r) => Math.abs(ringArea(r)) > 500)[0];
 
