@@ -23,3 +23,8 @@
   - alan eşitlemesinden SONRA sırt sırta köşeler tekrar tek ortak noktada birleştirilir
   - yol tarafı chainage korunur, yalnız kesim doğrultusu ortak noktaya döndürülür
   - geçerlilik düşerse uygulanmaz; doğrulama: tsgo 0, build OK, A 14/14, B 13/13, 350ADA 12/12, regresyon 7/7
+- [x] Tolerans içi sırt sırta köşe birleşimi + yol kenarı ile alan dengeleme
+  - weldRearCorners: birleşme eşiği p.tolerance (sabit 1 m değil)
+  - rebalanceCutsToAreas(): ortak arka nokta sabit tutulur, alan sapması kesimin
+    YOL KENARINDAKİ ucu chainage boyunca kaydırılarak giderilir (cepheye dik olma kuralı göz ardı)
+  - Doğrulama: tsgo 0, regresyon 7/7, A 14/14, B 13/13, 350ADA 12/12, tüm bloklar dik açılı

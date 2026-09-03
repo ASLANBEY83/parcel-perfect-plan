@@ -1504,12 +1504,61 @@ function rearPointOfCut(rowRing: Ring, front: Pt[], c: CutDef): Pt | null {
 }
 
 /**
- * 1 m (p.tolerance) içinde yaklaşan sırt sırta parsel sınırlarını TEK ORTAK
- * NOKTADA birleştirir. Yol tarafındaki noktalar (chainage) korunur; yalnızca
- * kesim doğrultusu ortak noktaya bakacak şekilde döndürülür. Geçerlilik
- * düşerse değişiklik uygulanmaz. Idempotenttir: zaten birleşmiş köşelerde
- * sonucu değiştirmez.
+ * Birleştirme (weld) sonrası alan dengelemesi.
+ * Arka köşe ortak noktaya sabitlendiği için parsel alanı sapar; bu sapma
+ * kesimin YOL KENARINDAKİ ucu chainage boyunca kaydırılarak giderilir.
+ * Kesim hattı ortak arka noktaya bakmaya devam eder; yani "cepheye dik olma"
+ * kuralı bilinçli olarak göz ardı edilir (kullanıcı kuralı).
  */
+function rebalanceCutsToAreas(
+  rowRing: Ring,
+  frontLine: Pt[],
+  cuts: CutDef[],
+  targetAreas: number[],
+): void {
+  const L = polylineLength(frontLine);
+  const moveCut = (c: CutDef, s: number) => {
+    const at = atChainage(frontLine, s);
+    c.s = s;
+    c.pt = at.pt;
+    c.tangent = at.dir;
+    c.dir = c.shared ? norm(sub(c.shared, at.pt)) : perp(at.dir);
+  };
+  const areaBetween = (a: CutDef | null, b: CutDef | null): number => {
+    let r = rowRing;
+    if (a) r = clipHalfPlane(r, a.pt, cutNormal(a));
+    if (r.length >= 3 && b) r = clipHalfPlane(r, b.pt, mul(cutNormal(b), -1));
+    return r.length >= 3 ? ringArea(r) : 0;
+  };
+
+  // Son parsel küsuratı absorbe eder: yalnız ilk n-1 parselin alanı hedefe çekilir.
+  for (let i = 0; i < cuts.length; i++) {
+    const target = targetAreas[i];
+    if (!Number.isFinite(target) || target <= 0) continue;
+    const prev = i > 0 ? cuts[i - 1] : null;
+    const cur = cuts[i];
+    const lo0 = (prev ? prev.s : 0) + 0.25;
+    const hi0 = L - 0.25;
+    if (hi0 <= lo0) continue;
+    let lo = lo0;
+    let hi = hi0;
+    for (let it = 0; it < 40; it++) {
+      const m = (lo + hi) / 2;
+      moveCut(cur, m);
+      if (areaBetween(prev, cur) < target) lo = m;
+      else hi = m;
+    }
+    moveCut(cur, (lo + hi) / 2);
+  }
+}
+
+/**
+ * Tolerans (p.tolerance) içinde yaklaşan sırt sırta parsel köşelerini TEK ORTAK
+ * NOKTADA birleştirir. Ardından oluşan alan sapması, kesimin yol kenarındaki
+ * ucu kaydırılarak dengelenir (cepheye dik olma kuralı göz ardı edilir).
+ * Geçerlilik düşerse değişiklik uygulanmaz; idempotenttir.
+ */
+
 function weldRearCorners(
   rows: { ring: Ring; front: Pt[] }[],
   solutions: [RowSolution, RowSolution],
@@ -1556,6 +1605,12 @@ function weldRearCorners(
   if (!count) return null;
 
   const cuts = [cutsA, cutsB];
+  // Birleştirme alanı bozar: her sıranın parsel alanları (son parsel hariç)
+  // yol kenarındaki köşe kaydırılarak eski değerine geri çekilir.
+  [0, 1].forEach((i) => {
+    const targets = (i === 0 ? sa : sb).parcels.map((x) => x.area);
+    rebalanceCutsToAreas(rows[i].ring, rows[i].front, cuts[i], targets);
+  });
   const rowsOut = [0, 1].map((i) =>
     buildRowParcels(rows[i].ring, rows[i].front, cuts[i], buildingLines, frontages, roadLines, p, i),
   );
