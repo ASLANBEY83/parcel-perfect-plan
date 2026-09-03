@@ -599,7 +599,7 @@ function makeBuilding(
         for (const off of [0, -1, 1, -2, 2, -3, 3, -50, 50]) {
           // Tüm kütleler dik açılı dikdörtgendir (yamuk/serbest form üretilmez).
           const cand: { ring: Ring; area: number; front: number; depth: number; taper: number; irregular?: boolean }[] = [];
-          const widths = [p.minBuildingArea / h, maxByTaks / h, Infinity];
+          const widths = [p.minBuildingArea / h];
           const seen = new Set<number>();
           for (const w of widths) {
             const rect = rectAt(h, w, off);
