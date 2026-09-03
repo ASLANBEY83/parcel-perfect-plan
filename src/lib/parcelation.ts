@@ -1700,6 +1700,102 @@ function weldRearCorners(
   return { count, rowsOut, cuts, maxGap };
 }
 
+/**
+ * SON GEOMETRİK KONTROL (tolerans kuralı): tüm parsel köşeleri ve ada kırık
+ * noktaları birlikte kümelenir; tolerans içindeki köşeler TEK ORTAK NOKTAYA
+ * indirgenir. Küme içinde bir ada kırık noktası varsa ortak nokta O noktadır.
+ * Kesim doğrultusundan bağımsız, doğrudan halka köşeleri üzerinde çalışır; bu
+ * yüzden alan eşitleme/kaydırma adımlarının bıraktığı küçük açıklıkları da kapatır.
+ * Geçerli parsel sayısı düşerse uygulanmaz (idempotent).
+ */
+function snapVertexClusters(
+  parcels: Parcel[],
+  rows: { ring: Ring; front: Pt[] }[],
+  adaVertices: Pt[],
+  buildingLines: Pt[][],
+  frontages: Pt[][],
+  roadLines: Pt[][],
+  p: Params,
+): { parcels: Parcel[]; count: number; maxGap: number } | null {
+  const tol = p.tolerance;
+  if (!(tol > 0) || !parcels.length) return null;
+
+  type Ref = { pi: number; vi: number; pt: Pt };
+  const refs: Ref[] = [];
+  parcels.forEach((pc, pi) => pc.ring.forEach((q, vi) => refs.push({ pi, vi, pt: q })));
+
+  // Union-find
+  const parent = refs.map((_, i) => i);
+  const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+  const union = (a: number, b: number) => {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent[rb] = ra;
+  };
+  for (let i = 0; i < refs.length; i++)
+    for (let j = i + 1; j < refs.length; j++) {
+      if (refs[i].pi === refs[j].pi) continue; // aynı parselin iki köşesi birleştirilmez
+      if (dist(refs[i].pt, refs[j].pt) <= tol) union(i, j);
+    }
+
+  const groups = new Map<number, number[]>();
+  refs.forEach((_, i) => {
+    const r = find(i);
+    const g = groups.get(r);
+    if (g) g.push(i);
+    else groups.set(r, [i]);
+  });
+
+  // Yeni köşe konumları
+  const newRings = parcels.map((pc) => pc.ring.map((q) => [q[0], q[1]] as Pt));
+  let count = 0;
+  let maxGap = 0;
+  for (const idxs of groups.values()) {
+    const pts = idxs.map((i) => refs[i].pt);
+    // Küme içinde ada kırık noktası varsa hedef O noktadır.
+    let target: Pt | null = null;
+    for (const q of pts) {
+      const av = nearestAdaVertex(q, adaVertices, tol);
+      if (av && (!target || av.d < dist(q, target))) target = av.pt;
+    }
+    if (!target) {
+      if (pts.length < 2) continue;
+      target = [
+        pts.reduce((a, q) => a + q[0], 0) / pts.length,
+        pts.reduce((a, q) => a + q[1], 0) / pts.length,
+      ];
+    }
+    const gap = Math.max(...pts.map((q) => dist(q, target!)));
+    if (gap < 1e-6) continue;
+    idxs.forEach((i) => {
+      newRings[refs[i].pi][refs[i].vi] = target!;
+    });
+    count++;
+    maxGap = Math.max(maxGap, gap);
+  }
+  if (!count) return null;
+
+  const out: Parcel[] = [];
+  for (let i = 0; i < parcels.length; i++) {
+    const src = parcels[i];
+    const front = rows[Math.min(src.row, rows.length - 1)]?.front ?? rows[0].front;
+    const np = evaluateParcel(
+      newRings[i],
+      front,
+      buildingLines,
+      frontages,
+      roadLines,
+      p,
+      src.corner,
+      src.row,
+    );
+    if (!np) return null;
+    out.push({ ...np, no: src.no });
+  }
+  const validBefore = parcels.filter((x) => x.valid).length;
+  if (out.filter((x) => x.valid).length < validBefore) return null;
+  return { parcels: out, count, maxGap };
+}
 
 
 export function optimizeBlock(
