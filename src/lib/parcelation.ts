@@ -1141,9 +1141,9 @@ function equalizeRowCuts(
   for (let i = 1; i <= n - 3; i++) {
     const prev = out[i - 1];
     const cur = out[i];
-    const next = out[i + 1];
     let lo = prev.s + 0.5;
-    let hi = Math.min(next ? next.s - 0.5 : L - 0.5, L - 0.5);
+    // Sonraki kesimler sırayla sağa kaydırıldığı için üst sınır hattın sonudur.
+    let hi = L - 0.5;
     if (hi <= lo) continue;
     for (let it = 0; it < 40; it++) {
       const m = (lo + hi) / 2;
