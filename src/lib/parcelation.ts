@@ -1503,6 +1503,71 @@ function rearPointOfCut(rowRing: Ring, front: Pt[], c: CutDef): Pt | null {
   return best;
 }
 
+/**
+ * 1 m (p.tolerance) içinde yaklaşan sırt sırta parsel sınırlarını TEK ORTAK
+ * NOKTADA birleştirir. Yol tarafındaki noktalar (chainage) korunur; yalnızca
+ * kesim doğrultusu ortak noktaya bakacak şekilde döndürülür. Geçerlilik
+ * düşerse değişiklik uygulanmaz. Idempotenttir: zaten birleşmiş köşelerde
+ * sonucu değiştirmez.
+ */
+function weldRearCorners(
+  rows: { ring: Ring; front: Pt[] }[],
+  solutions: [RowSolution, RowSolution],
+  buildingLines: Pt[][],
+  frontages: Pt[][],
+  roadLines: Pt[][],
+  p: Params,
+): { count: number; rowsOut: Parcel[][]; cuts: CutDef[][]; maxGap: number } | null {
+  const [sa, sb] = solutions;
+  const cutsA = sa.cuts.map((c) => ({ ...c }));
+  const cutsB = sb.cuts.map((c) => ({ ...c }));
+  const rearA = cutsA.map((c) => rearPointOfCut(rows[0].ring, rows[0].front, c));
+  const rearB = cutsB.map((c) => rearPointOfCut(rows[1].ring, rows[1].front, c));
+
+  const usedB = new Set<number>();
+  let count = 0;
+  let maxGap = 0;
+  rearA.forEach((pa, ia) => {
+    if (!pa) return;
+    let bi = -1;
+    let bd = Infinity;
+    rearB.forEach((pb, ib) => {
+      if (!pb || usedB.has(ib)) return;
+      const d = dist(pa, pb);
+      if (d < bd) {
+        bd = d;
+        bi = ib;
+      }
+    });
+    if (bi < 0 || bd > p.tolerance) return;
+    usedB.add(bi);
+    const pb = rearB[bi]!;
+    const shared: Pt = [(pa[0] + pb[0]) / 2, (pa[1] + pb[1]) / 2];
+    const apply = (c: CutDef) => {
+      c.dir = norm(sub(shared, c.pt));
+      c.paired = true;
+      c.shared = shared;
+    };
+    apply(cutsA[ia]);
+    apply(cutsB[bi]);
+    count++;
+    maxGap = Math.max(maxGap, bd);
+  });
+  if (!count) return null;
+
+  const cuts = [cutsA, cutsB];
+  const rowsOut = [0, 1].map((i) =>
+    buildRowParcels(rows[i].ring, rows[i].front, cuts[i], buildingLines, frontages, roadLines, p, i),
+  );
+  const validBefore = sa.validCount + sb.validCount;
+  const validAfter = rowsOut.reduce((a, ps) => a + ps.filter((x) => x.valid).length, 0);
+  if (validAfter < validBefore) return null;
+  if (rowsOut[0].length !== sa.parcels.length || rowsOut[1].length !== sb.parcels.length) return null;
+  return { count, rowsOut, cuts, maxGap };
+}
+
+
+
 export function optimizeBlock(
   ring0: Ring,
   buildingLines: Pt[][],
