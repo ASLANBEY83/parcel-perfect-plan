@@ -490,108 +490,66 @@ function makeBuilding(
     let v0 = vBase;
 
 
-    const quadAt = (h: number, width: number, off: number) => {
+    // Zarf köşelerinin v seviyeleri: extent fonksiyonu bu seviyeler arasında
+    // doğrusaldır, bu yüzden en dar kesişim daima bir köşe seviyesinde ya da
+    // bandın uçlarında oluşur.
+    const vertexLevels = [...new Set(f.map((q) => q[1]))].sort((a, b) => a - b);
+    const extentCache = new Map<number, [number, number] | null>();
+    const extentOf = (v: number): [number, number] | null => {
+      const k = Math.round(v * 1000);
+      if (extentCache.has(k)) return extentCache.get(k) ?? null;
+      const e = extentAt(f, v);
+      extentCache.set(k, e);
+      return e;
+    };
+    /**
+     * [vA,vB] bandında zarfın İÇİNDE kalan güvenli u-aralığı: bandın uçları ve
+     * arada kalan tüm köşe seviyeleri kesiştirilir; böylece yamuk/amorf
+     * zarflarda da dikdörtgenin hiçbir köşesi dışarı taşmaz.
+     */
+    const safeExtent = (vA: number, vB: number): [number, number] | null => {
+      let lo = -Infinity;
+      let hi = Infinity;
+      const consider = (v: number) => {
+        const e = extentOf(v);
+        if (!e) return false;
+        lo = Math.max(lo, e[0]);
+        hi = Math.min(hi, e[1]);
+        return hi - lo > 1e-6;
+      };
+      if (!consider(vA) || !consider(vB)) return null;
+      for (const v of vertexLevels) {
+        if (v <= vA + 1e-9) continue;
+        if (v >= vB - 1e-9) break;
+        if (!consider(v)) return null;
+      }
+      return [lo, hi];
+    };
+
+    /**
+     * Kütle optimizasyonu: bandın içine sığan DİK AÇILI dikdörtgen.
+     * Genişlik istenen değere kırpılır, merkez kaydırma (off) ile konumlandırılır.
+     */
+    const rectAt = (h: number, width: number, off: number) => {
       const v1 = v0 + h;
-      const e0 = extentAt(f, v0);
-      const e1 = extentAt(f, v1);
-      if (!e0 || !e1) return null;
-      const lo = Math.max(e0[0], e1[0]);
-      const hi = Math.min(e0[1], e1[1]);
-      if (hi - lo + 1e-6 < width || width < p.minBuildingFront) return null;
-      const half = width / 2;
+      const e = safeExtent(v0, v1);
+      if (!e) return null;
+      const [lo, hi] = e;
+      const w = Math.min(width, hi - lo);
+      if (w < p.minBuildingFront - 1e-9) return null;
+      const half = w / 2;
       const center = Math.min(Math.max((lo + hi) / 2 + off, lo + half), hi - half);
       const u0 = center - half;
       const u1 = center + half;
-      const area = width * h;
       const ring: Ring = [
         fromFrame([u0, v0], origin, u),
         fromFrame([u1, v0], origin, u),
         fromFrame([u1, v1], origin, u),
         fromFrame([u0, v1], origin, u),
       ];
-      return { ring, area, front: width, depth: h };
+      return { ring, area: w * h, front: w, depth: h };
     };
 
-    const trapAt = (h: number, off: number) => {
-      const v1 = v0 + h;
-      const e0 = extentAt(f, v0);
-      const e1 = extentAt(f, v1);
-      if (!e0 || !e1) return null;
-      const a0 = e0[1] - e0[0];
-      const a1 = e1[1] - e1[0];
-      if (a0 < p.minBuildingFront) return null;
-      const k = Math.min(1, (2 * p.minBuildingArea) / (h * (a0 + a1)));
-      const w0 = a0 * k;
-      const w1 = a1 * k;
-      if (w0 < p.minBuildingFront || w1 < p.minBuildingFront) return null;
-      const c0 = Math.min(Math.max((e0[0] + e0[1]) / 2 + off, e0[0] + w0 / 2), e0[1] - w0 / 2);
-      const c1 = Math.min(Math.max((e1[0] + e1[1]) / 2 + off, e1[0] + w1 / 2), e1[1] - w1 / 2);
-      const area = ((w0 + w1) / 2) * h;
-      const ring: Ring = [
-        fromFrame([c0 - w0 / 2, v0], origin, u),
-        fromFrame([c0 + w0 / 2, v0], origin, u),
-        fromFrame([c1 + w1 / 2, v1], origin, u),
-        fromFrame([c1 - w1 / 2, v1], origin, u),
-      ];
-      const taper = Math.abs(w0 - w1) / Math.max(w0, w1);
-      return { ring, area, front: w0, depth: h, taper };
-    };
-
-    // Köşe başı parseller için: bir yan kenarı zarfın (ikinci yolun yapı inşaat hattı)
-    // kenarına tam yaslanan düzgün yamuk.
-    const trapSideAt = (h: number, side: 0 | 1) => {
-      const v1 = v0 + h;
-      const e0 = extentAt(f, v0);
-      const e1 = extentAt(f, v1);
-      if (!e0 || !e1) return null;
-      const s0 = e0[side];
-      const s1 = e1[side];
-      const sgn = side === 0 ? 1 : -1; // iç tarafa doğru yön
-      const avail0 = sgn * (e0[1 - side] - s0);
-      const avail1 = sgn * (e1[1 - side] - s1);
-      if (Math.min(avail0, avail1) < p.minBuildingFront) return null;
-      const k = Math.min(1, (2 * p.minBuildingArea) / (h * (avail0 + avail1)));
-      const w0 = avail0 * k;
-      const w1 = avail1 * k;
-      if (w0 < p.minBuildingFront || w1 < p.minBuildingFront) return null;
-      const fL: Pt = side === 0 ? fromFrame([s0, v0], origin, u) : fromFrame([s0 + sgn * w0, v0], origin, u);
-      const fR: Pt = side === 0 ? fromFrame([s0 + sgn * w0, v0], origin, u) : fromFrame([s0, v0], origin, u);
-      const bR: Pt = side === 0 ? fromFrame([s1 + sgn * w1, v1], origin, u) : fromFrame([s1, v1], origin, u);
-      const bL: Pt = side === 0 ? fromFrame([s1, v1], origin, u) : fromFrame([s1 + sgn * w1, v1], origin, u);
-      const ring: Ring = [fL, fR, bR, bL];
-      const area = ((w0 + w1) / 2) * h;
-      const taper = Math.abs(w0 - w1) / Math.max(w0, w1);
-      return { ring, area, front: w0, depth: h, taper };
-    };
-
-
-    const clipAt = (h: number) => {
-      const v1 = v0 + h;
-      const clip = (poly: Pt[], keep: (q: Pt) => boolean, at: (a: Pt, b: Pt) => Pt): Pt[] => {
-        const out: Pt[] = [];
-        for (let i = 0; i < poly.length; i++) {
-          const a = poly[i];
-          const b = poly[(i + 1) % poly.length];
-          const ka = keep(a);
-          const kb = keep(b);
-          if (ka) out.push(a);
-          if (ka !== kb) out.push(at(a, b));
-        }
-        return out;
-      };
-      const cutV = (a: Pt, b: Pt, v: number): Pt => {
-        const t = (v - a[1]) / (b[1] - a[1] || 1e-9);
-        return [a[0] + (b[0] - a[0]) * t, v];
-      };
-      let poly = clip(f, (q) => q[1] >= v0, (a, b) => cutV(a, b, v0));
-      if (poly.length < 3) return null;
-      poly = clip(poly, (q) => q[1] <= v1, (a, b) => cutV(a, b, v1));
-      if (poly.length < 3) return null;
-      const e0 = extentAt(f, v0);
-      if (!e0) return null;
-      const ring: Ring = poly.map((q) => fromFrame(q, origin, u));
-      return { ring, area: Math.abs(ringArea(ring)), front: e0[1] - e0[0], depth: h, taper: 0.35 };
-    };
 
     // Zarfı [vA,vB] × [uLo,uHi] bandına kırpar (teğetlik için öne uzatmada kullanılır).
     const clipBand = (vA: number, vB: number, uLo: number, uHi: number) => {
@@ -639,22 +597,19 @@ function makeBuilding(
       if (maxDepth < p.minBuildingDepth - 1e-4) break;
       for (let h = p.minBuildingDepth; h <= maxDepth + 1e-6; h += 0.25) {
         for (const off of [0, -1, 1, -2, 2, -3, 3, -50, 50]) {
-          const width = p.minBuildingArea / h;
+          // Tüm kütleler dik açılı dikdörtgendir (yamuk/serbest form üretilmez).
           const cand: { ring: Ring; area: number; front: number; depth: number; taper: number; irregular?: boolean }[] = [];
-          const rect = quadAt(h, width, off);
-          if (rect) cand.push({ ...rect, taper: 0 });
-          const trap = trapAt(h, off);
-          if (trap) cand.push(trap);
-          if (off === 0) {
-            // Burun/kırık köşelerde de düzgün yamuk üretilebilsin: yan kenara
-            // yaslanan yamuk her parselde denenir (yalnız köşe başlarında değil).
-            for (const side of [0, 1] as const) {
-              const ts = trapSideAt(h, side);
-              if (ts) cand.push(ts);
-            }
-            const free = clipAt(h);
-            if (free) cand.push({ ...free, irregular: true });
+          const widths = [p.minBuildingArea / h, maxByTaks / h, Infinity];
+          const seen = new Set<number>();
+          for (const w of widths) {
+            const rect = rectAt(h, w, off);
+            if (!rect) continue;
+            const key = Math.round(rect.front * 100) * 1e6 + Math.round(rect.depth * 100);
+            if (seen.has(key)) continue;
+            seen.add(key);
+            cand.push({ ...rect, taper: 0 });
           }
+
 
           for (const q of cand) {
             if (q.area < p.minBuildingArea - 1e-6 || q.area > maxByTaks + 1e-6) continue;
