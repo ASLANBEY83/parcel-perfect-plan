@@ -177,6 +177,79 @@ function edgeLengthOnLines(ring: Ring, lines: Pt[][], tol = FRONTAGE_DETECTION.E
   return total;
 }
 
+/**
+ * Ada sınırını yaklaşık doğrusal (collinear) kenar zincirlerine böler.
+ * Böylece her yol ayrı bir polyline olarak taşınır ve köşe parsellerde
+ * cephe alınan yollar birbirinden ayırt edilebilir. Zincirlerin birleşimi
+ * ada sınırının tamamına eşittir; çekme (envelope) davranışı değişmez.
+ */
+export function roadChains(ring: Ring): Pt[][] {
+  const r = ensureCCW(ring);
+  const n = r.length;
+  if (n < 3) return [[...r]];
+  const dirOf = (i: number) => norm(sub(r[(i + 1) % n], r[i]));
+  // Zincir başlangıcı: yön değişiminin belirgin olduğu kenar
+  let start = 0;
+  for (let i = 0; i < n; i++) {
+    if (dot(dirOf(i), dirOf((i - 1 + n) % n)) < EDGE_CLASSIFICATION.REAR_EDGE_PARALLEL_MIN) {
+      start = i;
+      break;
+    }
+  }
+  const chains: Pt[][] = [];
+  let cur: Pt[] = [r[start]];
+  for (let k = 0; k < n; k++) {
+    const i = (start + k) % n;
+    const next = r[(i + 1) % n];
+    cur.push(next);
+    const cont =
+      k < n - 1 && dot(dirOf(i), dirOf((i + 1) % n)) >= EDGE_CLASSIFICATION.REAR_EDGE_PARALLEL_MIN;
+    if (!cont) {
+      if (cur.length >= 2) chains.push(cur);
+      cur = [next];
+    }
+  }
+  return chains.length ? chains : [[...r, r[0]]];
+}
+
+/** Köşe parselde ana cepheye dik (yani ikinci yola ait) ada sınırı kenarlarının toplam uzunluğu. */
+function perpendicularRoadLength(ring: Ring, roadLines: Pt[][], mainFrontages: Pt[][]): number {
+  const H = FRONTAGE_DETECTION;
+  const tol = H.EDGE_ON_LINE_TOLERANCE;
+  let total = 0;
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i];
+    const b = ring[(i + 1) % ring.length];
+    const m: Pt = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    const onBoundary = roadLines.some(
+      (l) =>
+        nearestOnPolyline(m, l).d < tol &&
+        nearestOnPolyline(a, l).d < tol * 1.5 &&
+        nearestOnPolyline(b, l).d < tol * 1.5,
+    );
+    if (!onBoundary) continue;
+    // Ana yol cephesinde zaten sayılan kenarları tekrar sayma
+    const onMain = mainFrontages.some(
+      (l) => l.length >= 2 && nearestOnPolyline(m, l).d < tol && nearestOnPolyline(a, l).d < tol * 1.5,
+    );
+    if (onMain) continue;
+    const dirEdge = norm(sub(b, a));
+    // Ana cephe doğrultusuna dik olan sınır kenarı = ikinci yol cephesi
+    let perp = false;
+    for (const l of mainFrontages) {
+      if (l.length < 2) continue;
+      const near = nearestOnPolyline(m, l);
+      const seg = Math.min(near.seg, l.length - 2);
+      const dirMain = norm(sub(l[seg + 1], l[seg]));
+      if (Math.abs(dot(dirEdge, dirMain)) < EDGE_CLASSIFICATION.REAR_EDGE_PARALLEL_MIN) perp = true;
+    }
+    if (perp) total += dist(a, b);
+  }
+  return total;
+}
+
+
+
 export type EdgeKind = "front" | "side" | "rear";
 
 /**
@@ -800,13 +873,18 @@ function buildRowParcels(
     if (ring.length < 3) continue;
     ring = simplifyRing(ring);
     const area = ringArea(ring);
-    const frontage = edgeLengthOnLines(ring, allFrontages);
+    const mainFrontage = edgeLengthOnLines(ring, allFrontages);
     const envelope = buildEnvelope(ring, roadLines, p, allFrontages);
     const corner = i === 0 || i === n - 1;
+    // Köşe parselde ikinci (yan) yol cephesi de yola cephe ölçümüne katılır.
+    const sideRoadFrontage = corner ? perpendicularRoadLength(ring, roadLines, allFrontages) : 0;
+    const frontage = mainFrontage + sideRoadFrontage;
     const bld = envelope.length >= 3
       ? makeBuilding(ring, envelope, frontLine, buildingLines, area, p, corner, roadLines)
       : { ring: null, area: 0, front: 0, depth: 0 };
-    const depth = area / Math.max(frontage, 1e-6);
+    // Derinlik daima ANA yol cephesi üzerinden ölçülür (ikinci cephe derinliği azaltmaz).
+    const depth = area / Math.max(mainFrontage, 1e-6);
+
     const issues: string[] = [];
     let hard = 0;
     const fail = (m: string) => {
@@ -826,10 +904,17 @@ function buildRowParcels(
       const requiredDepth = p.frontSetback + p.rearSetback + p.minBuildingDepth;
       const usableDepth = depth;
       const envArea = envelope.length >= 3 ? Math.abs(ringArea(envelope)) : 0;
-      if (envelope.length < 3)
+      const minWidth = 2 * p.sideSetback + p.minBuildingFront;
+      const sliver = mainFrontage > 1e-6 && mainFrontage < minWidth - 1e-6 && area < p.minArea;
+      if (sliver)
+        fail(
+          `Dejenere (iğne) parsel: sıra bölmeden artan ${mainFrontage.toFixed(2)} m genişlikte şerit (gerekli ${minWidth.toFixed(2)} m = 2×${p.sideSetback} yan + ${p.minBuildingFront} yapı cephesi)`,
+        );
+      else if (envelope.length < 3)
         fail(
           `Ön/yan/arka çekme (${p.frontSetback}/${p.sideSetback}/${p.rearSetback} m) nedeniyle yapı yaklaşma sınırı oluşmuyor`,
         );
+
       else if (usableDepth < requiredDepth - 1e-6)
         fail(
           `Yapılaşabilir minimum derinlik sağlanamıyor: kullanılabilir ${usableDepth.toFixed(2)} m < gerekli ${requiredDepth.toFixed(2)} m (ön ${p.frontSetback} + arka ${p.rearSetback} + yapı ${p.minBuildingDepth})`,
@@ -1114,7 +1199,7 @@ export function optimizeBlock(
   log.push(`${frontages.length} yol cephesi belirlendi.`);
 
   // Ada sınırlarının tamamı yola cephelidir: her ada kenarından frontSetback kadar ön çekme uygulanır.
-  const roadLines: Pt[][] = [[...ring, ring[0]]];
+  const roadLines: Pt[][] = roadChains(ring);
 
   const blockMp: MultiPoly = [[ring]];
   let rows: { ring: Ring; front: Pt[] }[] = [];
