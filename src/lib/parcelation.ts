@@ -1605,6 +1605,12 @@ function weldRearCorners(
   if (!count) return null;
 
   const cuts = [cutsA, cutsB];
+  // Birleştirme alanı bozar: her sıranın parsel alanları (son parsel hariç)
+  // yol kenarındaki köşe kaydırılarak eski değerine geri çekilir.
+  [0, 1].forEach((i) => {
+    const targets = (i === 0 ? sa : sb).parcels.map((x) => x.area);
+    rebalanceCutsToAreas(rows[i].ring, rows[i].front, cuts[i], targets);
+  });
   const rowsOut = [0, 1].map((i) =>
     buildRowParcels(rows[i].ring, rows[i].front, cuts[i], buildingLines, frontages, roadLines, p, i),
   );
