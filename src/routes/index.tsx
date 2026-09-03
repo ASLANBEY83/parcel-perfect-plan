@@ -16,7 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
-import { Crosshair, Download, FileText, Layers, Map as MapIcon, Play, RefreshCw, SlidersHorizontal, Upload, X } from "lucide-react";
+import { Check, Crosshair, Download, FileText, GitBranch, Layers, Map as MapIcon, Play, RefreshCw, SlidersHorizontal, Trash2, Upload, X } from "lucide-react";
 import type { WorkerRequest, WorkerResponse } from "@/workers/parcelation.worker";
 
 function PanelItem({
@@ -76,6 +76,14 @@ const LAYER_LABELS: Record<keyof LayerVisibility, string> = {
   YAPI_BLOKLARI: "Yapı blokları",
 };
 
+/** Üretilen her parselasyon çözümü ayrı bir "alternatif katman" olarak saklanır. */
+interface Alt {
+  id: number;
+  variant: number;
+  scope: "one" | "all";
+  results: BlockResult[];
+}
+
 function Index() {
   const [doc, setDoc] = useState<DxfDoc | null>(null);
   const [fileName, setFileName] = useState<string>("");
@@ -91,6 +99,9 @@ function Index() {
   const jobRef = useRef(0);
   const [notice, setNotice] = useState<string | null>(null);
   const [variant, setVariant] = useState(0);
+  const [alts, setAlts] = useState<Alt[]>([]);
+  const [activeAlt, setActiveAlt] = useState<number | null>(null);
+  const altSeq = useRef(0);
   const [zipping, setZipping] = useState(false);
   const [activeBlock, setActiveBlock] = useState(0);
   const [tab, setTab] = useState<"ayarlar" | "harita" | "sonuc">("harita");
@@ -161,6 +172,9 @@ function Index() {
       setDoc(d);
       setFileName(name);
       setResults([]);
+      setAlts([]);
+      setActiveAlt(null);
+      setVariant(0);
       setSelected(null);
       const guessAda = d.layers.find((l) => /ada/i.test(l)) ?? d.layers[0] ?? "ADA";
       // Türkçe büyük/küçük harf (İ/I/ş) farkları ve yaygın adlandırmalar için normalize edilmiş arama
@@ -196,15 +210,52 @@ function Index() {
     r.readAsText(f);
   }
 
+  /** Yeni çözümü alternatif katman listesine ekler ve haritada aktif eder. */
+  function registerAlt(out: BlockResult[], variant: number, scope: "one" | "all") {
+    const id = ++altSeq.current;
+    setAlts((l) => [...l, { id, variant, scope, results: out }]);
+    setActiveAlt(id);
+    setResults(out);
+    setActiveBlock(0);
+    setSelected(null);
+  }
+
+  /** Kullanıcı listeden bir alternatifi seçtiğinde haritayı ve dışa aktarımı ona bağlar. */
+  function selectAlt(a: Alt) {
+    setActiveAlt(a.id);
+    setResults(a.results);
+    setVariant(a.variant);
+    setActiveBlock(0);
+    setSelected(null);
+  }
+
+  function removeAlt(id: number) {
+    setAlts((l) => {
+      const next = l.filter((a) => a.id !== id);
+      if (activeAlt === id) {
+        const last = next[next.length - 1];
+        if (last) {
+          setActiveAlt(last.id);
+          setResults(last.results);
+          setVariant(last.variant);
+        } else {
+          setActiveAlt(null);
+          setResults([]);
+        }
+        setActiveBlock(0);
+        setSelected(null);
+      }
+      return next;
+    });
+  }
+
   function runInline(rings: Ring[], variant: number) {
     setTimeout(() => {
       try {
         const out = rings.map((r, i) =>
           optimizeBlock(r, exactBuildingLines, params, { id: `ada-${i + 1}`, name: `ADA ${i + 1}`, variant }),
         );
-        setResults(out);
-        setActiveBlock(0);
-        setSelected(null);
+        registerAlt(out, variant, rings.length > 1 ? "all" : "one");
         setNotice(variant > 0 ? `Alternatif parselasyon #${variant} üretildi.` : null);
       } catch (err) {
         setNotice("Hesaplama hatası: " + (err as Error).message);
@@ -253,9 +304,7 @@ function Index() {
       if (msg.type === "progress") {
         setProgress({ done: msg.done, total: msg.total });
       } else if (msg.type === "done") {
-        setResults(msg.results);
-        setActiveBlock(0);
-        setSelected(null);
+        registerAlt(msg.results, variant, target.length > 1 ? "all" : "one");
         setNotice(variant > 0 ? `Alternatif parselasyon #${variant} üretildi.` : null);
         setBusy(false);
         setProgress(null);
@@ -528,7 +577,70 @@ function Index() {
               </p>
             </PanelItem>
 
+            <PanelItem value="alternatif" icon={<GitBranch className="size-3.5" />} title={`Alternatifler (${alts.length})`}>
+              {alts.length === 0 ? (
+                <p className="text-[10px] leading-relaxed text-muted-foreground">
+                  Henüz alternatif yok. “Parselasyonu Hesapla” ve “Alternatif” butonları her çözümü buraya ayrı bir
+                  katman olarak ekler; seçtiğiniz katman haritada gösterilir ve dışa aktarılır.
+                </p>
+              ) : (
+                <div className="space-y-1.5">
+                  {alts.map((a) => {
+                    const s = summarize(a.results);
+                    const on = activeAlt === a.id;
+                    return (
+                      <div
+                        key={a.id}
+                        className={cn(
+                          "flex items-center gap-2 rounded-lg border px-2.5 py-2 transition-colors",
+                          on ? "border-primary bg-primary/10" : "border-border/70 bg-background/40 hover:bg-accent/40",
+                        )}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => selectAlt(a)}
+                          className="min-w-0 flex-1 text-left"
+                          aria-pressed={on}
+                        >
+                          <span className="flex items-center gap-1.5 font-mono text-[11px] font-semibold text-foreground">
+                            {on && <Check className="size-3 text-primary" />}
+                            {a.variant === 0 ? "Çözüm A" : `Alternatif #${a.variant}`}
+                            <span className="text-[9px] font-normal uppercase tracking-wider text-muted-foreground">
+                              {a.scope === "all" ? `${a.results.length} ada` : "tek ada"}
+                            </span>
+                          </span>
+                          <span className="mt-0.5 block font-mono text-[10px] text-muted-foreground">
+                            {s.valid}/{s.parcels} geçerli parsel · ort. {Math.round(s.avgArea).toLocaleString("tr-TR")} m²
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => removeAlt(a.id)}
+                          aria-label="Alternatifi sil"
+                          title="Alternatifi sil"
+                          className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-destructive/15 hover:text-destructive"
+                        >
+                          <Trash2 className="size-3.5" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                  <p className="text-[10px] leading-relaxed text-muted-foreground">
+                    Aktif alternatif (vurgulu satır) haritada görünür ve tüm dışa aktarımlarda kullanılır.
+                  </p>
+                </div>
+              )}
+            </PanelItem>
+
             <PanelItem value="export" icon={<Download className="size-3.5" />} title="Dışa Aktar">
+              {activeAlt !== null && alts.length > 1 && (
+                <p className="rounded-md border border-primary/40 bg-primary/10 px-2 py-1.5 font-mono text-[10px] text-primary">
+                  Dışa aktarılacak: {(() => {
+                    const a = alts.find((x) => x.id === activeAlt);
+                    return a ? (a.variant === 0 ? "Çözüm A" : `Alternatif #${a.variant}`) : "";
+                  })()}
+                </p>
+              )}
               <div className="grid grid-cols-2 gap-2">
                 <Btn
                   small
