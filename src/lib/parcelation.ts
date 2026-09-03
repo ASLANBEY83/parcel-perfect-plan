@@ -2478,10 +2478,13 @@ export function optimizeBlock(
       if (!changed) break;
     }
 
+    if (created)
+      log.push(`Alan doğrulama: artık alandan koşulları sağlayan ${created} yeni parsel üretildi.`);
     if (absorbed)
       log.push(
         `Alan doğrulama: ${absorbed} artık parça (${absorbedArea.toFixed(1)} m²) koşulları bozmadan komşu parsellere eklendi.`,
       );
+
   }
 
 
