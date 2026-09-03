@@ -369,6 +369,7 @@ function makeBuilding(
   if (envelope.length < 3) return { ring: null, area: 0, front: 0, depth: 0 };
   // Blok, ada sınırına ön bahçe mesafesinden daha yakın olamaz (köşe kırıklarında da).
   const respectsSetback = (r: Ring): boolean => {
+    const g=globalThis as any; if(g.__c) g.__c.rs=(g.__c.rs??0)+1;
     if (!roadLines.length) return true;
     for (let i = 0; i < r.length; i++) {
       const a = r[i];
@@ -481,6 +482,7 @@ function makeBuilding(
   cands.sort((x, y) => x.pref - y.pref);
 
   const solveFor = (origin: Pt, u: Pt, v0Min: number) => {
+    const g=globalThis as any; if(g.__c) g.__c.sf=(g.__c.sf??0)+1;
     const f = envelope.map((q) => toFrame(q, origin, u));
     const bb = bbox(f);
     // Yapı inşaat hattı: zarfın ön kenarı (yerel çerçevede en küçük v).
