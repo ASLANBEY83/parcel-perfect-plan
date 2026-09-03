@@ -2350,6 +2350,94 @@ export function optimizeBlock(
     }
   }
 
+  // ALAN DOĞRULAMA: ada içinde parsele dönüşmemiş artık alanlar, koşulları
+  // bozmadığı sürece en yakın komşu parsele eklenir; böylece üretilen parsellerin
+  // toplam alanı ada alanını doğrular.
+  {
+    let absorbed = 0;
+    let absorbedArea = 0;
+    /** Büyük artık parçayı, komşulara dağıtılabilecek küçük dilimlere böler. */
+    const slicePiece = (poly: Poly): MultiPoly => {
+      const area = Math.abs(mpArea([poly]));
+      if (area <= 40) return [poly];
+      const bb = bbox(poly[0]);
+      const n = Math.min(24, Math.max(2, Math.ceil(area / 30)));
+      const horiz = bb.w >= bb.h;
+      const out: MultiPoly = [];
+      for (let i = 0; i < n; i++) {
+        const t0 = i / n;
+        const t1 = (i + 1) / n;
+        const band: Ring = horiz
+          ? [
+              [bb.minX + bb.w * t0, bb.minY - 1],
+              [bb.minX + bb.w * t1, bb.minY - 1],
+              [bb.minX + bb.w * t1, bb.maxY + 1],
+              [bb.minX + bb.w * t0, bb.maxY + 1],
+            ]
+          : [
+              [bb.minX - 1, bb.minY + bb.h * t0],
+              [bb.maxX + 1, bb.minY + bb.h * t0],
+              [bb.maxX + 1, bb.minY + bb.h * t1],
+              [bb.minX - 1, bb.minY + bb.h * t1],
+            ];
+        for (const q of mpIntersect([poly], [[band]]))
+          if (Math.abs(mpArea([q])) > 0.5) out.push(q);
+      }
+      return out.length ? out : [poly];
+    };
+
+    for (let pass = 0; pass < 4; pass++) {
+      let uni: MultiPoly = [];
+      for (const pc of parcels) uni = mpUnion(uni, [[pc.ring]]);
+      const pieces = mpDifference(blockMp, uni).filter((poly) => Math.abs(mpArea([poly])) > 0.5);
+      if (!pieces.length) break;
+      let changed = false;
+      for (const raw of pieces) {
+        for (const piece of slicePiece(raw)) {
+          const pieceArea = Math.abs(mpArea([piece]));
+          const pc = centroid(piece[0]);
+          const near = parcels
+            .filter((q) => q.valid)
+            .sort((a, b) => dist(centroid(a.ring), pc) - dist(centroid(b.ring), pc))
+            .slice(0, 4);
+          for (const o of near) {
+            const u = largestPoly(mpUnion([[o.ring]], [piece]));
+            if (!u) continue;
+            // Parça komşuya değmiyorsa birleşim kopuk kalır; gerçekten eklenmiş olmalı.
+            if (mpArea([u]) < o.area + pieceArea * 0.9) continue;
+
+            const front = rows[o.row]?.front ?? frontages[0];
+            const cand = evaluateParcel(
+              u[0],
+              front,
+              buildingLines,
+              frontages,
+              roadLines,
+              p,
+              o.corner,
+              o.row,
+            );
+            if (cand && cand.valid) {
+              parcels.splice(parcels.indexOf(o), 1, cand);
+              absorbed++;
+              absorbedArea += pieceArea;
+              changed = true;
+              break;
+            }
+          }
+        }
+      }
+      if (!changed) break;
+    }
+
+    if (absorbed)
+      log.push(
+        `Alan doğrulama: ${absorbed} artık parça (${absorbedArea.toFixed(1)} m²) koşulları bozmadan komşu parsellere eklendi.`,
+      );
+  }
+
+
+
   // Numaralandırma: kuzeybatı köşedeki parselden başlayıp saat ibresi yönünde
   {
     const cen = (r: Pt[]): Pt => {
