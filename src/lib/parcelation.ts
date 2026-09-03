@@ -839,32 +839,23 @@ interface RowSolution {
   log: string[];
 }
 
-function buildRowParcels(
-  rowRing: Ring,
+/** Tek bir parsel halkasını değerlendirir (zarf + yapı bloğu + kural kontrolleri). */
+function evaluateParcel(
+  ring0: Ring,
   frontLine: Pt[],
-  cuts: CutDef[],
   buildingLines: Pt[][],
   allFrontages: Pt[][],
   roadLines: Pt[][],
   p: Params,
+  corner: boolean,
   rowIndex: number,
-): Parcel[] {
-  const tangentAt = (c: CutDef): Pt => cutNormal(c);
-  const parcels: Parcel[] = [];
-  const n = cuts.length + 1;
-  for (let i = 0; i < n; i++) {
-    const a = i === 0 ? null : cuts[i - 1];
-    const b = i === n - 1 ? null : cuts[i];
-    const tangent = a ? tangentAt(a) : b ? tangentAt(b) : [1, 0];
-    let ring = rowRing;
-    if (a) ring = clipHalfPlane(ring, a.pt, tangentAt(a));
-    if (ring.length >= 3 && b) ring = clipHalfPlane(ring, b.pt, mul(tangentAt(b), -1));
-    if (ring.length < 3) continue;
-    ring = simplifyRing(ring);
+): Parcel | null {
+  const ring = simplifyRing(ring0);
+  if (ring.length < 3) return null;
+  {
     const area = ringArea(ring);
     const mainFrontage = edgeLengthOnLines(ring, allFrontages);
     const envelope = buildEnvelope(ring, roadLines, p, allFrontages);
-    const corner = i === 0 || i === n - 1;
     // Köşe parselde ikinci (yan) yol cephesi de yola cephe ölçümüne katılır.
     const sideRoadFrontage = corner ? perpendicularRoadLength(ring, roadLines, allFrontages) : 0;
     const frontage = mainFrontage + sideRoadFrontage;
@@ -872,6 +863,7 @@ function buildRowParcels(
       envelope.length >= 3
         ? makeBuilding(ring, envelope, frontLine, buildingLines, area, p, corner, roadLines)
         : { ring: null, area: 0, front: 0, depth: 0 };
+
     // Derinlik daima ANA yol cephesi üzerinden ölçülür (ikinci cephe derinliği azaltmaz).
     const depth = area / Math.max(mainFrontage, 1e-6);
 
