@@ -21,6 +21,8 @@ export function exportDXF(blocks: BlockResult[], buildingLines: Pt[][]) {
     ents.push({ layer: "ADA", points: b.ring, closed: true });
     for (const p of b.parcels) {
       ents.push({ layer: "PARSELLER", points: p.ring, closed: true });
+      if (p.envelope && p.envelope.length >= 3)
+        ents.push({ layer: "YAPI_YAKLASMA", points: p.envelope, closed: true });
       if (p.building) ents.push({ layer: "YAPI_BLOKLARI", points: p.building, closed: true });
     }
   }
@@ -123,7 +125,7 @@ export function exportPackage(blocks: BlockResult[], buildingLines: Pt[][]) {
       format: "parselasyon-paket/1.0",
       crs: "yerel-projekte-metre",
       hedef: "PostGIS / GeoPackage aktarımı",
-      katmanlar: ["ADA", "PARSELLER", "YAPI_INSAA_HATTI", "YAPI_BLOKLARI"],
+      katmanlar: ["ADA", "PARSELLER", "YAPI_INSAA_HATTI", "YAPI_YAKLASMA", "YAPI_BLOKLARI"],
       veri: JSON.parse(exportGeoJSON(blocks, buildingLines)),
     },
     null,

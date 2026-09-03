@@ -35,3 +35,7 @@
   - Doğrulama: tsgo 0, A 14/14, B 13/13, 350ADA 12/12, regresyon 7/7, tüm bloklar dik açılı
 
 - [x] Tolerans içi tüm köşelerin tek noktada birleşmesi (snapVertexClusters): kesim geometrisinden bağımsız son geometrik kontrol; ada kırık noktası küme içindeyse ortak nokta O olur. Doğrulama: 350ADA tolerans 2 m -> ayrık köşe çifti 0, 12/12 geçerli, regresyon 7/7
+
+- Oval/elips adalar: uzun yol cephesine paralel, ada genişliğinin ~yarısı kadar ofsetli bant ile ada ikiye bölünüp mevcut blok/parsel algoritmaları uygulanıyor (`parallelSplitAt`, `bufferPolyline`).
+- Koşul garantisi: artık parseller komşusuna birleştiriliyor veya parsel olarak üretilmiyor; üretilen tüm parseller koşulları sağlıyor.
+- Yapı yaklaşma sınırları DXF çıktısına `YAPI_YAKLASMA` katmanı olarak eklendi.
