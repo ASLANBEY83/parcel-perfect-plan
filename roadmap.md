@@ -14,3 +14,8 @@
   - performans: pahalı doğrulamalar (respectsSetback/cornerFrontsOk) yalnız daha iyi skorlu adaylarda
   - Doğrulama: tsgo 0, build OK, verify-parcelation 7/7 PASS (A 14/14, B 13/13),
     scripts/verify-building-rect.ts -> tüm bloklar dik açılı, zarf dışına taşma 0 (örnek + gerçek 350ADA 12/12)
+- [x] Kural 3 son rötuşu: ara parsellerde tam sayı alan eşitlemesi
+  - equalizeRowCuts(): tüm kesimler kesinleştikten sonra ara parseller tam sayı hedef alana taşınır
+  - ortak köşe (paired) kesimleri de taşınabilir; hat yönü ortak noktaya bakacak şekilde korunur
+  - küsurat sıra başına TEK tampon parselde toplanır, köşe parseller kütle kuralına göre kalır
+  - Doğrulama: tsgo 0, TEST A 14/14, TEST B 13/13, regresyon 7/7, 350ADA 12/12, tüm bloklar dik açılı
