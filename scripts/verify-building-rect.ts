@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
-import { parseDxf, polygonsOfLayer } from "../../src/lib/dxf";
-import { sampleDxf } from "../../src/lib/sample";
-import { defaultParams, optimizeBlock, type Params } from "../../src/lib/parcelation";
-import { dist, dot, norm, sub, mpDifference, mpArea, type Ring } from "../../src/lib/geo";
+import { parseDxf, polygonsOfLayer } from "@/lib/dxf";
+import { sampleDxf } from "@/lib/sample";
+import { defaultParams, optimizeBlock, type Params } from "@/lib/parcelation";
+import { dist, dot, norm, sub, mpDifference, mpArea, type Ring } from "@/lib/geo";
 
 function check(label: string, ring: Ring, ov: Partial<Params>) {
   const p = { ...defaultParams, ...ov };
