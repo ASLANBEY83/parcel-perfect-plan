@@ -369,7 +369,6 @@ function makeBuilding(
   if (envelope.length < 3) return { ring: null, area: 0, front: 0, depth: 0 };
   // Blok, ada sınırına ön bahçe mesafesinden daha yakın olamaz (köşe kırıklarında da).
   const respectsSetback = (r: Ring): boolean => {
-    const g=globalThis as any; if(g.__c) g.__c.rs=(g.__c.rs??0)+1;
     if (!roadLines.length) return true;
     for (let i = 0; i < r.length; i++) {
       const a = r[i];
@@ -482,7 +481,6 @@ function makeBuilding(
   cands.sort((x, y) => x.pref - y.pref);
 
   const solveFor = (origin: Pt, u: Pt, v0Min: number) => {
-    const g=globalThis as any; if(g.__c) g.__c.sf=(g.__c.sf??0)+1;
     const f = envelope.map((q) => toFrame(q, origin, u));
     const bb = bbox(f);
     // Yapı inşaat hattı: zarfın ön kenarı (yerel çerçevede en küçük v).
@@ -532,10 +530,8 @@ function makeBuilding(
      * Kütle optimizasyonu: bandın içine sığan DİK AÇILI dikdörtgen.
      * Genişlik istenen değere kırpılır, merkez kaydırma (off) ile konumlandırılır.
      */
-    const rectAt = (h: number, width: number, off: number) => {
+    const rectAt = (h: number, width: number, off: number, e: [number, number]) => {
       const v1 = v0 + h;
-      const e = safeExtent(v0, v1);
-      if (!e) return null;
       const [lo, hi] = e;
       const w = Math.min(width, hi - lo);
       if (w < p.minBuildingFront - 1e-9) return null;
@@ -598,13 +594,17 @@ function makeBuilding(
       const maxDepth = vMax - v0;
       if (maxDepth < p.minBuildingDepth - 1e-4) break;
       for (let h = p.minBuildingDepth; h <= maxDepth + 1e-6; h += 0.25) {
+        // Band (yükseklik) başına güvenli u-aralığı bir kez hesaplanır.
+        const bandExtent = safeExtent(v0, v0 + h);
+        if (!bandExtent) continue;
+        if (bandExtent[1] - bandExtent[0] < p.minBuildingFront - 1e-9) continue;
         for (const off of [0, -1, 1, -2, 2, -3, 3, -50, 50]) {
           // Tüm kütleler dik açılı dikdörtgendir (yamuk/serbest form üretilmez).
           const cand: { ring: Ring; area: number; front: number; depth: number; taper: number; irregular?: boolean }[] = [];
           const widths = [p.minBuildingArea / h, maxByTaks / h, Infinity];
           const seen = new Set<number>();
           for (const w of widths) {
-            const rect = rectAt(h, w, off);
+            const rect = rectAt(h, w, off, bandExtent);
             if (!rect) continue;
             const key = Math.round(rect.front * 100) * 1e6 + Math.round(rect.depth * 100);
             if (seen.has(key)) continue;
