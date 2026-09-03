@@ -2190,6 +2190,21 @@ export function optimizeBlock(
   const parcels: Parcel[] = [];
   solutions.forEach((s) => s && parcels.push(...s.parcels));
 
+  // SON KONTROL: kesim geometrisinden bağımsız olarak, tolerans içinde kalan tüm
+  // parsel köşeleri (ve ada kırık noktaları) tek ortak noktada birleştirilir.
+  {
+    const snapped = snapVertexClusters(parcels, rows, ring, buildingLines, frontages, roadLines, p);
+    if (snapped) {
+      parcels.length = 0;
+      parcels.push(...snapped.parcels);
+      toleranceUsed = Math.max(toleranceUsed, snapped.count);
+      log.push(
+        `Son geometrik kontrol: ${snapped.count} köşe kümesi ${p.tolerance.toFixed(2)} m tolerans içinde tek noktada birleştirildi (en büyük açıklık ${snapped.maxGap.toFixed(2)} m).`,
+      );
+    }
+  }
+
+
 
   // Numaralandırma: kuzeybatı köşedeki parselden başlayıp saat ibresi yönünde
   {
