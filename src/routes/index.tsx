@@ -68,11 +68,12 @@ export const Route = createFileRoute("/")({
   component: Index,
 });
 
-const LAYER_KEYS: (keyof LayerVisibility)[] = ["ADA", "PARSELLER", "YAPI_INSAA_HATTI", "YAPI_BLOKLARI"];
+const LAYER_KEYS: (keyof LayerVisibility)[] = ["ADA", "PARSELLER", "YAPI_INSAA_HATTI", "YAPI_YAKLASMA", "YAPI_BLOKLARI"];
 const LAYER_LABELS: Record<keyof LayerVisibility, string> = {
   ADA: "Ada sınırı",
   PARSELLER: "Parseller",
   YAPI_INSAA_HATTI: "Yapı inşaat hattı",
+  YAPI_YAKLASMA: "Yapı yaklaşma sınırı",
   YAPI_BLOKLARI: "Yapı blokları",
 };
 
@@ -131,6 +132,7 @@ function Index() {
     ADA: true,
     PARSELLER: true,
     YAPI_INSAA_HATTI: true,
+    YAPI_YAKLASMA: true,
     YAPI_BLOKLARI: true,
   });
   const fileRef = useRef<HTMLInputElement>(null);

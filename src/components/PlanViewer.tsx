@@ -8,6 +8,7 @@ export interface LayerVisibility {
   ADA: boolean;
   PARSELLER: boolean;
   YAPI_INSAA_HATTI: boolean;
+  YAPI_YAKLASMA: boolean;
   YAPI_BLOKLARI: boolean;
 }
 
@@ -414,6 +415,21 @@ export const PlanViewer = memo(function PlanViewer({
                 />
               );
             }),
+          )}
+
+        {layers.YAPI_YAKLASMA &&
+          blocks.flatMap((b) =>
+            b.parcels
+              .filter((p) => p.envelope)
+              .map((p) => (
+                <polygon
+                  key={`${b.id}-env-${p.no}`}
+                  points={poly(p.envelope!)}
+                  className="pointer-events-none fill-envelope stroke-envelope-line"
+                  strokeWidth={1.1}
+                  strokeDasharray="7 4"
+                />
+              )),
           )}
 
         {layers.YAPI_BLOKLARI &&
