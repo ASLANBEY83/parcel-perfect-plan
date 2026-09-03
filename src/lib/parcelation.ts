@@ -873,13 +873,18 @@ function buildRowParcels(
     if (ring.length < 3) continue;
     ring = simplifyRing(ring);
     const area = ringArea(ring);
-    const frontage = edgeLengthOnLines(ring, allFrontages);
+    const mainFrontage = edgeLengthOnLines(ring, allFrontages);
     const envelope = buildEnvelope(ring, roadLines, p, allFrontages);
     const corner = i === 0 || i === n - 1;
+    // Köşe parselde ikinci (yan) yol cephesi de yola cephe ölçümüne katılır.
+    const sideRoadFrontage = corner ? perpendicularRoadLength(ring, roadLines, allFrontages) : 0;
+    const frontage = mainFrontage + sideRoadFrontage;
     const bld = envelope.length >= 3
       ? makeBuilding(ring, envelope, frontLine, buildingLines, area, p, corner, roadLines)
       : { ring: null, area: 0, front: 0, depth: 0 };
-    const depth = area / Math.max(frontage, 1e-6);
+    // Derinlik daima ANA yol cephesi üzerinden ölçülür (ikinci cephe derinliği azaltmaz).
+    const depth = area / Math.max(mainFrontage, 1e-6);
+
     const issues: string[] = [];
     let hard = 0;
     const fail = (m: string) => {
