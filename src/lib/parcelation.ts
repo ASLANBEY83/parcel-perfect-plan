@@ -904,10 +904,17 @@ function buildRowParcels(
       const requiredDepth = p.frontSetback + p.rearSetback + p.minBuildingDepth;
       const usableDepth = depth;
       const envArea = envelope.length >= 3 ? Math.abs(ringArea(envelope)) : 0;
-      if (envelope.length < 3)
+      const minWidth = 2 * p.sideSetback + p.minBuildingFront;
+      const sliver = mainFrontage > 1e-6 && mainFrontage < minWidth - 1e-6 && area < p.minArea;
+      if (sliver)
+        fail(
+          `Dejenere (iğne) parsel: sıra bölmeden artan ${mainFrontage.toFixed(2)} m genişlikte şerit (gerekli ${minWidth.toFixed(2)} m = 2×${p.sideSetback} yan + ${p.minBuildingFront} yapı cephesi)`,
+        );
+      else if (envelope.length < 3)
         fail(
           `Ön/yan/arka çekme (${p.frontSetback}/${p.sideSetback}/${p.rearSetback} m) nedeniyle yapı yaklaşma sınırı oluşmuyor`,
         );
+
       else if (usableDepth < requiredDepth - 1e-6)
         fail(
           `Yapılaşabilir minimum derinlik sağlanamıyor: kullanılabilir ${usableDepth.toFixed(2)} m < gerekli ${requiredDepth.toFixed(2)} m (ön ${p.frontSetback} + arka ${p.rearSetback} + yapı ${p.minBuildingDepth})`,
