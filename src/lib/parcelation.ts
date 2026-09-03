@@ -106,6 +106,8 @@ interface CutDef {
   tangent: Pt; // yol cephesi doğrultusu (chainage artış yönü)
   s: number; // chainage
   paired: boolean;
+  /** Ortak köşe noktası (sırt sırta parsel köşesi birleştirildiyse). */
+  shared?: Pt;
 }
 
 /** Kesme çizgisinin, chainage artış yönünü gösteren normali. */
@@ -978,7 +980,322 @@ function scoreSolution(parcels: Parcel[], p: Params, tolUsed: number): number {
   );
 }
 
+/** İki çözümü karşılaştırır: geçerli parsel → köşe geçerliliği → skor. */
+function betterSolution(a: RowSolution, b: RowSolution | null): boolean {
+  if (!b) return true;
+  if (a.validCount !== b.validCount) return a.validCount > b.validCount;
+  const ca = cornerValidCount(a.parcels);
+  const cb = cornerValidCount(b.parcels);
+  if (ca !== cb) return ca > cb;
+  return a.score > b.score;
+}
+
+/** Bir noktanın cephe hattı üzerindeki chainage değeri (m). */
+function chainageOf(line: Pt[], pt: Pt): number {
+  const n = nearestOnPolyline(pt, line);
+  let acc = 0;
+  for (let i = 0; i < n.seg; i++) acc += dist(line[i], line[i + 1]);
+  return acc + n.t * dist(line[n.seg], line[n.seg + 1]);
+}
+
+/** Sıra içinde, cephe hattında s chainage'inden ÖNCE kalan alan. */
+function areaBeforeChainage(ring: Ring, line: Pt[], s: number): number {
+  const { pt, dir } = atChainage(line, s);
+  const before = clipHalfPlane(ring, pt, mul(dir, -1));
+  return before.length >= 3 ? ringArea(before) : 0;
+}
+
+/** Hedef alanı (öncesinde) veren chainage: alan s ile monoton arttığı için ikili arama. */
+function chainageForArea(ring: Ring, line: Pt[], target: number): number {
+  const L = polylineLength(line);
+  let lo = 0;
+  let hi = L;
+  for (let i = 0; i < 42; i++) {
+    const m = (lo + hi) / 2;
+    if (areaBeforeChainage(ring, line, m) < target) lo = m;
+    else hi = m;
+  }
+  return (lo + hi) / 2;
+}
+
+/** Sıra halkasını [sA, sB] chainage aralığına kırpar (null = uç). */
+function chainagePiece(ring: Ring, line: Pt[], sA: number | null, sB: number | null): Ring {
+  let r = ring;
+  if (sA != null) {
+    const { pt, dir } = atChainage(line, sA);
+    r = clipHalfPlane(r, pt, dir);
+  }
+  if (r.length >= 3 && sB != null) {
+    const { pt, dir } = atChainage(line, sB);
+    r = clipHalfPlane(r, pt, mul(dir, -1));
+  }
+  return r.length >= 3 ? r : [];
+}
+
+function cutAtChainage(line: Pt[], s: number): CutDef {
+  const { pt, dir } = atChainage(line, s);
+  return { pt, dir: perp(dir), tangent: dir, s, paired: false };
+}
+
+/**
+ * KURAL 1+2: Köşe parselin iç sınırı (ifraz hattı) kütleden geri hesaplanır.
+ * Önce ön çekme + asgari yapı cephesi + yan çekme genişliğinde bir köşe parseli
+ * varsayılır, içine dik açılı en büyük dikdörtgen kütle yerleştirilir, ardından
+ * kütlenin komşuya bakan yüzünden DIŞARIYA `sideSetback` kadar ofset alınarak
+ * kesin sınır belirlenir. Alan daima [minArea, maxArea] aralığına kırpılır.
+ */
+function cornerCutChainage(
+  rowRing: Ring,
+  frontLine: Pt[],
+  buildingLines: Pt[][],
+  allFrontages: Pt[][],
+  roadLines: Pt[][],
+  p: Params,
+  fromStart: boolean,
+): number | null {
+  const L = polylineLength(frontLine);
+  const total = ringArea(rowRing);
+  if (L < 1e-6 || total < p.minArea) return null;
+  const clampArea = (s: number) => {
+    const sMin = chainageForArea(rowRing, frontLine, fromStart ? p.minArea : total - p.minArea);
+    const sMax = chainageForArea(rowRing, frontLine, fromStart ? p.maxArea : total - p.maxArea);
+    if (fromStart) return Math.min(Math.max(s, sMin), Math.max(sMin, sMax));
+    return Math.max(Math.min(s, sMin), Math.min(sMin, sMax));
+  };
+
+  const w0 = p.frontSetback + p.minBuildingFront + p.sideSetback;
+  let s = clampArea(fromStart ? w0 : L - w0);
+
+  for (let it = 0; it < 4; it++) {
+    const ring = fromStart
+      ? chainagePiece(rowRing, frontLine, null, s)
+      : chainagePiece(rowRing, frontLine, s, null);
+    if (ring.length < 3) break;
+    const env = buildEnvelope(ring, roadLines, p, allFrontages);
+    if (env.length < 3) break;
+    const bld = makeBuilding(
+      ring,
+      env,
+      frontLine,
+      buildingLines,
+      ringArea(ring),
+      p,
+      true,
+      roadLines,
+    );
+    if (!bld.ring) break;
+    const cs = bld.ring.map((q) => chainageOf(frontLine, q));
+    const face = fromStart ? Math.max(...cs) : Math.min(...cs);
+    const next = clampArea(fromStart ? face + p.sideSetback : face - p.sideSetback);
+    const moved = Math.abs(next - s);
+    s = next;
+    if (moved < 0.05) break;
+  }
+  return s > 0.5 && s < L - 0.5 ? s : null;
+}
+
+/**
+ * KURAL 3: Köşe parseller düşüldükten sonra kalan alan, biri hariç TAMAMI eşit
+ * ve tam sayı yüzölçümlü ara parsellere bölünür; tüm küsurat tek bir "tampon"
+ * parsele aktarılır. Böylece ada alanı korunur.
+ */
+/**
+ * Ara parselleri tam sayı hedef alana eşitler; küsurat son ara ("tampon")
+ * parselde toplanır. Ortak köşeye bağlanmış (paired) kesimler değiştirilmez.
+ */
+function equalizeRowCuts(
+  rowRing: Ring,
+  frontLine: Pt[],
+  cuts: CutDef[],
+  parcels: Parcel[],
+  p: Params,
+): { cuts: CutDef[]; target: number } | null {
+  const n = parcels.length;
+  if (n < 4 || cuts.length !== n - 1) return null;
+  const mids = parcels.slice(1, n - 1);
+  if (mids.length < 2) return null;
+  const avg = mids.reduce((a, x) => a + x.area, 0) / mids.length;
+  const target = Math.floor(Math.min(Math.max(avg, p.minArea), p.maxArea));
+  if (target < p.minArea || target > p.maxArea) return null;
+
+  const L = polylineLength(frontLine);
+  const out = cuts.map((c) => ({ ...c }));
+
+  /** Kesimi verilen chainage'e taşır; ortak köşe varsa hat yönü o noktaya bakar. */
+  const moveCut = (c: CutDef, s: number) => {
+    const at = atChainage(frontLine, s);
+    c.s = s;
+    c.pt = at.pt;
+    c.tangent = at.dir;
+    c.dir = c.shared ? norm(sub(c.shared, at.pt)) : perp(at.dir);
+  };
+  /** İki kesim arasındaki parselin GERÇEK alanı (buildRowParcels ile aynı kırpma). */
+  const areaBetween = (a: CutDef | null, b: CutDef | null): number => {
+    let r = rowRing;
+    if (a) r = clipHalfPlane(r, a.pt, cutNormal(a));
+    if (r.length >= 3 && b) r = clipHalfPlane(r, b.pt, mul(cutNormal(b), -1));
+    return r.length >= 3 ? ringArea(r) : 0;
+  };
+
+  // Tampon parsel = son ara parsel; ondan öncekiler tam sayı hedefe eşitlenir.
+  for (let i = 1; i <= n - 3; i++) {
+    const prev = out[i - 1];
+    const cur = out[i];
+    let lo = prev.s + 0.5;
+    // Sonraki kesimler sırayla sağa kaydırıldığı için üst sınır hattın sonudur.
+    let hi = L - 0.5;
+    if (hi <= lo) continue;
+    for (let it = 0; it < 40; it++) {
+      const m = (lo + hi) / 2;
+      moveCut(cur, m);
+      if (areaBetween(prev, cur) < target) lo = m;
+      else hi = m;
+    }
+    moveCut(cur, (lo + hi) / 2);
+  }
+  return { cuts: out, target };
+}
+
+function solveRowStructured(
+
+  rowRing: Ring,
+  frontLine: Pt[],
+  buildingLines: Pt[][],
+  allFrontages: Pt[][],
+  roadLines: Pt[][],
+  p: Params,
+  rowIndex: number,
+): { best: RowSolution | null; log: string[] } {
+  const log: string[] = [];
+  const L = polylineLength(frontLine);
+  const total = ringArea(rowRing);
+  if (L < 1e-6 || total < p.minArea) return { best: null, log };
+
+  const sA = cornerCutChainage(rowRing, frontLine, buildingLines, allFrontages, roadLines, p, true);
+  const sB = cornerCutChainage(rowRing, frontLine, buildingLines, allFrontages, roadLines, p, false);
+  const cornerCuts: number[] = [];
+  if (sA != null) cornerCuts.push(sA);
+  if (sB != null && (sA == null || sB > sA + 1e-3)) cornerCuts.push(sB);
+  if (!cornerCuts.length) return { best: null, log };
+  cornerCuts.sort((a, b) => a - b);
+
+  const startS = cornerCuts[0];
+  const endS = cornerCuts.length > 1 ? cornerCuts[cornerCuts.length - 1] : L;
+  const midArea = areaBeforeChainage(rowRing, frontLine, endS) - areaBeforeChainage(rowRing, frontLine, startS);
+  log.push(
+    `Sıra ${rowIndex + 1}: köşe ifraz hatları kütleden geri hesaplandı ` +
+      `(chainage ${cornerCuts.map((x) => x.toFixed(2)).join(" / ")} m), kalan orta alan ${midArea.toFixed(1)} m².`,
+  );
+
+  const evaluate = (cuts: number[]): RowSolution => {
+    const defs = cuts.map((s) => cutAtChainage(frontLine, s));
+    const parcels = buildRowParcels(
+      rowRing,
+      frontLine,
+      defs,
+      buildingLines,
+      allFrontages,
+      roadLines,
+      p,
+      rowIndex,
+    );
+    return {
+      parcels,
+      cuts: defs,
+      score: scoreSolution(parcels, p, 0),
+      validCount: parcels.filter((x) => x.valid).length,
+      log: [],
+    };
+  };
+
+  let best: RowSolution | null = null;
+  let bestTargetDev = Infinity;
+  const nMax = Math.max(1, Math.floor(midArea / p.minArea));
+  const baseArea = areaBeforeChainage(rowRing, frontLine, startS);
+
+  for (let n = nMax; n >= 1; n--) {
+    const raw = midArea / n;
+    const targets = new Set<number>();
+    for (let d = 0; d <= 8; d++) {
+      targets.add(Math.floor(raw) - d);
+      targets.add(Math.floor(raw) + d);
+    }
+    for (const target of targets) {
+      if (target < p.minArea || target > p.maxArea) continue;
+      const buffer = midArea - (n - 1) * target;
+      if (n > 1 && (buffer < p.minArea || buffer > p.maxArea)) continue;
+      const cuts = [...cornerCuts];
+      for (let k = 1; k < n; k++)
+        cuts.push(chainageForArea(rowRing, frontLine, baseArea + k * target));
+      cuts.sort((a, b) => a - b);
+      const sol = evaluate(cuts);
+      const dev = n > 1 ? Math.abs(buffer - target) : 0;
+      const isBetter =
+        betterSolution(sol, best) ||
+        (best != null &&
+          sol.validCount === best.validCount &&
+          cornerValidCount(sol.parcels) === cornerValidCount(best.parcels) &&
+          dev < bestTargetDev - 1e-9);
+      if (isBetter) {
+        best = sol;
+        bestTargetDev = dev;
+      }
+    }
+  }
+  if (best)
+    log.push(
+      `Sıra ${rowIndex + 1}: yapılandırılmış çözüm → ${best.validCount}/${best.parcels.length} geçerli parsel.`,
+    );
+  return { best, log };
+}
+
 function solveRow(
+  rowRing: Ring,
+  frontLine: Pt[],
+  buildingLines: Pt[][],
+  allFrontages: Pt[][],
+  roadLines: Pt[][],
+  p: Params,
+  rowIndex: number,
+  tune = true,
+): { best: RowSolution | null; log: string[] } {
+  const structured = solveRowStructured(
+    rowRing,
+    frontLine,
+    buildingLines,
+    allFrontages,
+    roadLines,
+    p,
+    rowIndex,
+  );
+  const legacy = solveRowLegacy(
+    rowRing,
+    frontLine,
+    buildingLines,
+    allFrontages,
+    roadLines,
+    p,
+    rowIndex,
+    tune,
+  );
+  const log = [...structured.log, ...legacy.log];
+  // Kural gereği kütle→çekme→ifraz çözümü ÖNCELİKLİDİR; legacy çözüm yalnızca
+  // daha fazla geçerli parsel (ya da eşitlikte daha fazla geçerli köşe) üretirse seçilir.
+  const legacyStrictlyBetter =
+    !!legacy.best &&
+    !!structured.best &&
+    (legacy.best.validCount > structured.best.validCount ||
+      (legacy.best.validCount === structured.best.validCount &&
+        cornerValidCount(legacy.best.parcels) > cornerValidCount(structured.best.parcels)));
+  if (structured.best && (!legacy.best || !legacyStrictlyBetter)) {
+    log.push(`Sıra ${rowIndex + 1}: kütle→çekme→ifraz kuralına göre kurulan çözüm seçildi.`);
+    return { best: structured.best, log };
+  }
+  return { best: legacy.best, log };
+}
+
+function solveRowLegacy(
+
   rowRing: Ring,
   frontLine: Pt[],
   buildingLines: Pt[][],
@@ -1442,6 +1759,7 @@ export function optimizeBlock(
             // Yola dik gelme şartı, ortak köşe noktası için istisna kabul edilir.
             c.dir = norm(sub(pr.shared, pt));
             c.paired = true;
+            c.shared = pr.shared;
           };
           setCut(0, pr.ia, pr.da);
           setCut(1, pr.ib, pr.db);
@@ -1501,8 +1819,37 @@ export function optimizeBlock(
     }
   }
 
+  // KURAL 3 (son rötuş): tüm kesimler kesinleştikten sonra ara parsellerin
+  // yüzölçümleri TAM SAYI hedef alana eşitlenir; küsurat tek bir tampon parselde
+  // toplanır. Ortak köşeye bağlı (paired) kesimler dokunulmadan bırakılır.
+  rows.forEach((r, i) => {
+    const s = solutions[i];
+    if (!s || s.parcels.length < 4) return;
+    const eq = equalizeRowCuts(r.ring, r.front, s.cuts, s.parcels, p);
+    if (!eq) return;
+    const rebuilt = buildRowParcels(
+      r.ring,
+      r.front,
+      eq.cuts,
+      buildingLines,
+      frontages,
+      roadLines,
+      p,
+      i,
+    );
+    if (rebuilt.filter((x) => x.valid).length >= s.validCount && rebuilt.length === s.parcels.length) {
+      s.parcels = rebuilt;
+      s.cuts = eq.cuts;
+      s.validCount = rebuilt.filter((x) => x.valid).length;
+      log.push(
+        `Sıra ${i + 1}: ara parseller ${eq.target} m² hedef alana eşitlendi; küsurat tek tampon parsele aktarıldı.`,
+      );
+    }
+  });
+
   const parcels: Parcel[] = [];
   solutions.forEach((s) => s && parcels.push(...s.parcels));
+
 
   // Numaralandırma: kuzeybatı köşedeki parselden başlayıp saat ibresi yönünde
   {
