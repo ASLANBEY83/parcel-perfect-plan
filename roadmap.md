@@ -1,9 +1,9 @@
 # Görev Listesi
 
-- [x] Köşe parsel "uygun yapı bloğu üretilemedi" kök neden teşhisi (kod değiştirilmedi)
-  - Teşhis betikleri: scripts/diagnose-corner.ts, diagnose-corner-focus.ts, diagnose-corner-sweep.ts
-  - Bulgular: (1) detectRoadFrontages yalnızca 2 karşıt bant döndürüyor → köşe parselin 2. yol cephesi `frontage` ölçümüne girmiyor
-    (2) optimizeBlock roadLines = tüm ada sınırı (tek polyline) → makeBuilding.facedRoads/cornerFrontsOk tek yönde çalışıyor
-    (3) makeBuilding aday ön hattı yalnız tek frontLine'a paralel kenarlardan seçiliyor → blok ikinci yola yönlendirilemiyor
-    (4) sıra bölmeden artan iğne (sliver) köşe parseller → zarf hiç oluşmuyor
-- [ ] Minimum değişiklikle düzeltme (kullanıcı onayı sonrası)
+- [x] Köşe parsel "uygun yapı bloğu üretilemedi" kök neden teşhisi
+- [x] Minimum değişiklikle düzeltme (src/lib/parcelation.ts)
+  - roadChains(): ada sınırı ayrı yol zincirlerine bölündü (roadLines artık tek polyline değil)
+  - perpendicularRoadLength(): köşe parselde ikinci yol cephesi frontage ölçümüne dahil
+  - derinlik ölçümü ANA cepheden yapılır (ikinci cephe derinliği düşürmez)
+  - dejenere (iğne) parsel için ayrı red nedeni
+  - Doğrulama: tsc 0, TEST A 14/14, TEST B 14/14, regresyon 7/7, gerçek 350ADA 12/12 geçerli
