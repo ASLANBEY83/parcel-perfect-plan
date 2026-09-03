@@ -839,32 +839,23 @@ interface RowSolution {
   log: string[];
 }
 
-function buildRowParcels(
-  rowRing: Ring,
+/** Tek bir parsel halkasını değerlendirir (zarf + yapı bloğu + kural kontrolleri). */
+function evaluateParcel(
+  ring0: Ring,
   frontLine: Pt[],
-  cuts: CutDef[],
   buildingLines: Pt[][],
   allFrontages: Pt[][],
   roadLines: Pt[][],
   p: Params,
+  corner: boolean,
   rowIndex: number,
-): Parcel[] {
-  const tangentAt = (c: CutDef): Pt => cutNormal(c);
-  const parcels: Parcel[] = [];
-  const n = cuts.length + 1;
-  for (let i = 0; i < n; i++) {
-    const a = i === 0 ? null : cuts[i - 1];
-    const b = i === n - 1 ? null : cuts[i];
-    const tangent = a ? tangentAt(a) : b ? tangentAt(b) : [1, 0];
-    let ring = rowRing;
-    if (a) ring = clipHalfPlane(ring, a.pt, tangentAt(a));
-    if (ring.length >= 3 && b) ring = clipHalfPlane(ring, b.pt, mul(tangentAt(b), -1));
-    if (ring.length < 3) continue;
-    ring = simplifyRing(ring);
+): Parcel | null {
+  const ring = simplifyRing(ring0);
+  if (ring.length < 3) return null;
+  {
     const area = ringArea(ring);
     const mainFrontage = edgeLengthOnLines(ring, allFrontages);
     const envelope = buildEnvelope(ring, roadLines, p, allFrontages);
-    const corner = i === 0 || i === n - 1;
     // Köşe parselde ikinci (yan) yol cephesi de yola cephe ölçümüne katılır.
     const sideRoadFrontage = corner ? perpendicularRoadLength(ring, roadLines, allFrontages) : 0;
     const frontage = mainFrontage + sideRoadFrontage;
@@ -872,6 +863,7 @@ function buildRowParcels(
       envelope.length >= 3
         ? makeBuilding(ring, envelope, frontLine, buildingLines, area, p, corner, roadLines)
         : { ring: null, area: 0, front: 0, depth: 0 };
+
     // Derinlik daima ANA yol cephesi üzerinden ölçülür (ikinci cephe derinliği azaltmaz).
     const depth = area / Math.max(mainFrontage, 1e-6);
 
@@ -922,7 +914,7 @@ function buildRowParcels(
         fail(`Yapı derinliği ${bld.depth.toFixed(2)} m < ${p.minBuildingDepth} m`);
       if (bld.area / area > p.taks + 1e-6) fail(`TAKS ${(bld.area / area).toFixed(3)} > ${p.taks}`);
     }
-    parcels.push({
+    return {
       no: 0,
       row: rowIndex,
       ring,
@@ -938,11 +930,45 @@ function buildRowParcels(
       taksValue: bld.area / area,
       valid: hard === 0,
       issues,
-    });
-    void tangent;
+    };
+  }
+}
+
+function buildRowParcels(
+  rowRing: Ring,
+  frontLine: Pt[],
+  cuts: CutDef[],
+  buildingLines: Pt[][],
+  allFrontages: Pt[][],
+  roadLines: Pt[][],
+  p: Params,
+  rowIndex: number,
+): Parcel[] {
+  const tangentAt = (c: CutDef): Pt => cutNormal(c);
+  const parcels: Parcel[] = [];
+  const n = cuts.length + 1;
+  for (let i = 0; i < n; i++) {
+    const a = i === 0 ? null : cuts[i - 1];
+    const b = i === n - 1 ? null : cuts[i];
+    let ring = rowRing;
+    if (a) ring = clipHalfPlane(ring, a.pt, tangentAt(a));
+    if (ring.length >= 3 && b) ring = clipHalfPlane(ring, b.pt, mul(tangentAt(b), -1));
+    if (ring.length < 3) continue;
+    const parcel = evaluateParcel(
+      ring,
+      frontLine,
+      buildingLines,
+      allFrontages,
+      roadLines,
+      p,
+      i === 0 || i === n - 1,
+      rowIndex,
+    );
+    if (parcel) parcels.push(parcel);
   }
   return parcels;
 }
+
 
 function cornerValidCount(parcels: Parcel[]): number {
   return parcels.filter((x) => x.corner && x.valid).length;
@@ -1674,6 +1700,102 @@ function weldRearCorners(
   return { count, rowsOut, cuts, maxGap };
 }
 
+/**
+ * SON GEOMETRİK KONTROL (tolerans kuralı): tüm parsel köşeleri ve ada kırık
+ * noktaları birlikte kümelenir; tolerans içindeki köşeler TEK ORTAK NOKTAYA
+ * indirgenir. Küme içinde bir ada kırık noktası varsa ortak nokta O noktadır.
+ * Kesim doğrultusundan bağımsız, doğrudan halka köşeleri üzerinde çalışır; bu
+ * yüzden alan eşitleme/kaydırma adımlarının bıraktığı küçük açıklıkları da kapatır.
+ * Geçerli parsel sayısı düşerse uygulanmaz (idempotent).
+ */
+function snapVertexClusters(
+  parcels: Parcel[],
+  rows: { ring: Ring; front: Pt[] }[],
+  adaVertices: Pt[],
+  buildingLines: Pt[][],
+  frontages: Pt[][],
+  roadLines: Pt[][],
+  p: Params,
+): { parcels: Parcel[]; count: number; maxGap: number } | null {
+  const tol = p.tolerance;
+  if (!(tol > 0) || !parcels.length) return null;
+
+  type Ref = { pi: number; vi: number; pt: Pt };
+  const refs: Ref[] = [];
+  parcels.forEach((pc, pi) => pc.ring.forEach((q, vi) => refs.push({ pi, vi, pt: q })));
+
+  // Union-find
+  const parent = refs.map((_, i) => i);
+  const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+  const union = (a: number, b: number) => {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent[rb] = ra;
+  };
+  for (let i = 0; i < refs.length; i++)
+    for (let j = i + 1; j < refs.length; j++) {
+      if (refs[i].pi === refs[j].pi) continue; // aynı parselin iki köşesi birleştirilmez
+      if (dist(refs[i].pt, refs[j].pt) <= tol) union(i, j);
+    }
+
+  const groups = new Map<number, number[]>();
+  refs.forEach((_, i) => {
+    const r = find(i);
+    const g = groups.get(r);
+    if (g) g.push(i);
+    else groups.set(r, [i]);
+  });
+
+  // Yeni köşe konumları
+  const newRings = parcels.map((pc) => pc.ring.map((q) => [q[0], q[1]] as Pt));
+  let count = 0;
+  let maxGap = 0;
+  for (const idxs of groups.values()) {
+    const pts = idxs.map((i) => refs[i].pt);
+    // Küme içinde ada kırık noktası varsa hedef O noktadır.
+    let target: Pt | null = null;
+    for (const q of pts) {
+      const av = nearestAdaVertex(q, adaVertices, tol);
+      if (av && (!target || av.d < dist(q, target))) target = av.pt;
+    }
+    if (!target) {
+      if (pts.length < 2) continue;
+      target = [
+        pts.reduce((a, q) => a + q[0], 0) / pts.length,
+        pts.reduce((a, q) => a + q[1], 0) / pts.length,
+      ];
+    }
+    const gap = Math.max(...pts.map((q) => dist(q, target!)));
+    if (gap < 1e-6) continue;
+    idxs.forEach((i) => {
+      newRings[refs[i].pi][refs[i].vi] = target!;
+    });
+    count++;
+    maxGap = Math.max(maxGap, gap);
+  }
+  if (!count) return null;
+
+  const out: Parcel[] = [];
+  for (let i = 0; i < parcels.length; i++) {
+    const src = parcels[i];
+    const front = rows[Math.min(src.row, rows.length - 1)]?.front ?? rows[0].front;
+    const np = evaluateParcel(
+      newRings[i],
+      front,
+      buildingLines,
+      frontages,
+      roadLines,
+      p,
+      src.corner,
+      src.row,
+    );
+    if (!np) return null;
+    out.push({ ...np, no: src.no });
+  }
+  const validBefore = parcels.filter((x) => x.valid).length;
+  if (out.filter((x) => x.valid).length < validBefore) return null;
+  return { parcels: out, count, maxGap };
+}
 
 
 export function optimizeBlock(
@@ -2067,6 +2189,21 @@ export function optimizeBlock(
 
   const parcels: Parcel[] = [];
   solutions.forEach((s) => s && parcels.push(...s.parcels));
+
+  // SON KONTROL: kesim geometrisinden bağımsız olarak, tolerans içinde kalan tüm
+  // parsel köşeleri (ve ada kırık noktaları) tek ortak noktada birleştirilir.
+  {
+    const snapped = snapVertexClusters(parcels, rows, ring, buildingLines, frontages, roadLines, p);
+    if (snapped) {
+      parcels.length = 0;
+      parcels.push(...snapped.parcels);
+      toleranceUsed = Math.max(toleranceUsed, snapped.count);
+      log.push(
+        `Son geometrik kontrol: ${snapped.count} köşe kümesi ${p.tolerance.toFixed(2)} m tolerans içinde tek noktada birleştirildi (en büyük açıklık ${snapped.maxGap.toFixed(2)} m).`,
+      );
+    }
+  }
+
 
 
   // Numaralandırma: kuzeybatı köşedeki parselden başlayıp saat ibresi yönünde
