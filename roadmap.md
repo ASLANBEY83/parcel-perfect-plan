@@ -47,3 +47,6 @@
 
 - Turf halka kapanışı birebir eşitlendi ("First and last Position are not equivalent" hatası giderildi).
 - Alan doğrulama pass: artık alandan koşulları sağlayan yeni parseller üretilir, kalan küçük parçalar komşuya eklenir; kapatılamayan alan logda raporlanır.
+
+- [x] Ada ayrım hattı kırıkları da tolerans içinde birleşme hedefi: parsel köşesi ayrım hattı kırığına tolerans kadar yakınsa köşe tam o noktaya taşınıyor (`snapTargets` = ada sınırı + uzatılmış ayrım hattı köşeleri).
+- [x] Küme birleşiminden sonra alan farkı, parselin YOL CEPHESİNDEKİ ortak köşesi hat boyunca kaydırılarak dengeleniyor (`rebalanceRoadCorner`, diklik şartı göz ardı). Doğrulama: tsgo 0, regresyon 7/7, 353ADA 18/18 geçerli.
