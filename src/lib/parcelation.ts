@@ -1763,48 +1763,58 @@ function snapVertexClusters(
 
   for (const idxs of groups.values()) {
     const pts = idxs.map((i) => refs[i]!.pt);
-    // Küme içinde ada kırık noktası varsa hedef O noktadır.
-    let target: Pt | null = null;
+    if (pts.length < 2) continue;
+
+    // Hedef adayları: (1) ada kırık noktası, (2) küme ortalaması, (3) küme köşeleri.
+    const cands: Pt[] = [];
+    let ada: Pt | null = null;
+    let adaD = Infinity;
     for (const q of pts) {
       const av = nearestAdaVertex(q, adaVertices, tol);
-      if (av && (!target || av.d < dist(q, target))) target = av.pt;
+      if (av && av.d < adaD) {
+        adaD = av.d;
+        ada = av.pt;
+      }
     }
-    if (!target) {
-      if (pts.length < 2) continue;
-      target = [
-        pts.reduce((a, q) => a + q[0], 0) / pts.length,
-        pts.reduce((a, q) => a + q[1], 0) / pts.length,
-      ];
-    }
-    const gap = Math.max(...pts.map((q) => dist(q, target!)));
-    if (gap < 1e-6) continue;
+    if (ada) cands.push(ada);
+    cands.push([
+      pts.reduce((a, q) => a + q[0], 0) / pts.length,
+      pts.reduce((a, q) => a + q[1], 0) / pts.length,
+    ]);
+    for (const q of pts) cands.push([q[0], q[1]]);
 
     const touched = [...new Set(idxs.map((i) => refs[i]!.pi))];
-    const backup = touched.map((pi) => ({ pi, ring: rings[pi]!.map((q) => [q[0], q[1]] as Pt), pc: cur[pi]! }));
-    idxs.forEach((i) => {
-      rings[refs[i]!.pi]![refs[i]!.vi] = [target![0], target![1]];
-    });
-    let ok = true;
-    const next: { pi: number; pc: Parcel }[] = [];
-    for (const pi of touched) {
-      const np = reval(pi, rings[pi]!);
-      if (!np || (cur[pi]!.valid && !np.valid)) {
-        ok = false;
-        break;
-      }
-      next.push({ pi, pc: np });
-    }
-    if (!ok) {
-      backup.forEach((b) => {
-        rings[b.pi] = b.ring;
-        cur[b.pi] = b.pc;
+    for (const target of cands) {
+      const gap = Math.max(...pts.map((q) => dist(q, target)));
+      if (gap < 1e-6) break;
+      const backup = touched.map((pi) => ({ pi, ring: rings[pi]!.map((q) => [q[0], q[1]] as Pt), pc: cur[pi]! }));
+      idxs.forEach((i) => {
+        rings[refs[i]!.pi]![refs[i]!.vi] = [target[0], target[1]];
       });
-      continue;
+      let ok = true;
+      const next: { pi: number; pc: Parcel }[] = [];
+      for (const pi of touched) {
+        const np = reval(pi, rings[pi]!);
+        if (!np || (cur[pi]!.valid && !np.valid)) {
+          ok = false;
+          break;
+        }
+        next.push({ pi, pc: np });
+      }
+      if (!ok) {
+        backup.forEach((b) => {
+          rings[b.pi] = b.ring;
+          cur[b.pi] = b.pc;
+        });
+        continue;
+      }
+      next.forEach((n) => (cur[n.pi] = n.pc));
+      count++;
+      maxGap = Math.max(maxGap, gap);
+      break;
     }
-    next.forEach((n) => (cur[n.pi] = n.pc));
-    count++;
-    maxGap = Math.max(maxGap, gap);
   }
+
 
   if (!count) return null;
   return { parcels: cur, count, maxGap };
