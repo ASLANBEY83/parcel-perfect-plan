@@ -1973,12 +1973,16 @@ function snapBackToBackJunctions(
 
     if (!best) break;
     const source = rings[best.pi][best.vi];
-    // Köşe-köşe durumunda iki sıradan yalnız birini diğerine taşımak, özellikle
-    // köşe parselde yapı zarfını bozabiliyor. Ortak düğümü iki ucun ortasında
-    // kurup alan farkını her iki sıranın kendi yol köşesinde karşıla.
-    const sharedTarget: Pt = best.endpoint
-      ? [(source[0] + best.target[0]) / 2, (source[1] + best.target[1]) / 2]
-      : best.target;
+    // Köşe-köşe durumunda tek bir orta nokta bazı köşe parsellerin yapı zarfını
+    // bozabiliyor. Bağlantı boyunca orta nokta, iki mevcut uç ve ara noktalar
+    // denenir; ilk geçerli çözümde iki sıra da AYNI gerçek düğümü kullanır.
+    // Alan farkı aşağıda yalnız her sıranın yol köşesinde karşılanır.
+    const sharedTargets: Pt[] = best.endpoint
+      ? [0.5, 0, 1, 0.25, 0.75].map((t) => [
+          source[0] + (best.target[0] - source[0]) * t,
+          source[1] + (best.target[1] - source[1]) * t,
+        ] as Pt)
+      : [best.target];
     // Aynı fiziksel köşeyi kullanan aynı sıradaki komşular ile karşı sınırdaki
     // parseller birlikte güncellenir. Böylece birleşim yalnız çizgi üzerinde
     // kalmaz; iki tarafta da birebir aynı koordinatlı gerçek düğüm olur.
@@ -2015,60 +2019,71 @@ function snapBackToBackJunctions(
 
     const touchedList = [...touched];
     const backups = touchedList.map((pi) => ({ pi, ring: rings[pi].map((q) => [q[0], q[1]] as Pt), pc: cur[pi] }));
-    for (const pi of touchedList) {
-      if (cur[pi]?.row === cur[best.pi]?.row) {
-        for (let vi = 0; vi < rings[pi].length; vi++)
-          if (dist(rings[pi][vi], source) <= samePoint) rings[pi][vi] = [sharedTarget[0], sharedTarget[1]];
-        continue;
+    let accepted = false;
+    for (const sharedTarget of sharedTargets) {
+      // Her hedef adayı aynı başlangıç geometrisinden denenir.
+      for (const b of backups) {
+        rings[b.pi] = b.ring.map((q) => [q[0], q[1]] as Pt);
+        if (b.pc) cur[b.pi] = b.pc;
       }
-      const r = rings[pi];
-      if (best.endpoint) {
-        for (let vi = 0; vi < r.length; vi++)
-          if (dist(r[vi], best.target) <= samePoint) r[vi] = [sharedTarget[0], sharedTarget[1]];
-        continue;
-      }
-      for (let ei = 0; ei < r.length; ei++) {
-        const a = r[ei];
-        const b = r[(ei + 1) % r.length];
-        const ab = sub(b, a);
-        const l2 = dot(ab, ab);
-        if (l2 < 1e-10) continue;
-        const t = dot(sub(best.target, a), ab) / l2;
-        const projected = add(a, mul(ab, t));
-        if (t > 1e-6 && t < 1 - 1e-6 && dist(projected, best.target) <= 1e-5) {
-          r.splice(ei + 1, 0, [best.target[0], best.target[1]]);
-          break;
+      for (const pi of touchedList) {
+        if (cur[pi]?.row === cur[best.pi]?.row) {
+          for (let vi = 0; vi < rings[pi].length; vi++)
+            if (dist(rings[pi][vi], source) <= samePoint) rings[pi][vi] = [sharedTarget[0], sharedTarget[1]];
+          continue;
+        }
+        const r = rings[pi];
+        if (best.endpoint) {
+          for (let vi = 0; vi < r.length; vi++)
+            if (dist(r[vi], best.target) <= samePoint) r[vi] = [sharedTarget[0], sharedTarget[1]];
+          continue;
+        }
+        for (let ei = 0; ei < r.length; ei++) {
+          const a = r[ei];
+          const b = r[(ei + 1) % r.length];
+          const ab = sub(b, a);
+          const l2 = dot(ab, ab);
+          if (l2 < 1e-10) continue;
+          const t = dot(sub(best.target, a), ab) / l2;
+          const projected = add(a, mul(ab, t));
+          if (t > 1e-6 && t < 1 - 1e-6 && dist(projected, best.target) <= 1e-5) {
+            r.splice(ei + 1, 0, [sharedTarget[0], sharedTarget[1]]);
+            break;
+          }
         }
       }
-    }
-    const touchedRows = [...new Set(touchedList.map((pi) => cur[pi]?.row).filter((row): row is number => row !== undefined))];
-    for (const touchedRow of touchedRows) {
-      const sameRowTouched = touchedList.filter((pi) => cur[pi]?.row === touchedRow);
-      rebalanceAtRoadCorner(
-        touchedRow,
-        sameRowTouched,
-        new Map(backups.filter((b) => sameRowTouched.includes(b.pi)).map((b) => [b.pi, b.pc?.area ?? 0])),
-      );
-    }
-    const next: { pi: number; pc: Parcel }[] = [];
-    let ok = touchedList.length > 0;
-    for (const pi of touchedList) {
-      const np = reval(pi);
-      if (!np || (cur[pi]?.valid && !np.valid)) {
-        ok = false;
-        break;
+      const touchedRows = [...new Set(touchedList.map((pi) => cur[pi]?.row).filter((row): row is number => row !== undefined))];
+      for (const touchedRow of touchedRows) {
+        const sameRowTouched = touchedList.filter((pi) => cur[pi]?.row === touchedRow);
+        rebalanceAtRoadCorner(
+          touchedRow,
+          sameRowTouched,
+          new Map(backups.filter((b) => sameRowTouched.includes(b.pi)).map((b) => [b.pi, b.pc?.area ?? 0])),
+        );
       }
-      next.push({ pi, pc: np });
+      const next: { pi: number; pc: Parcel }[] = [];
+      let ok = touchedList.length > 0;
+      for (const pi of touchedList) {
+        const np = reval(pi);
+        if (!np || (backups.find((b) => b.pi === pi)?.pc?.valid && !np.valid)) {
+          ok = false;
+          break;
+        }
+        next.push({ pi, pc: np });
+      }
+      if (!ok) continue;
+      next.forEach(({ pi, pc }) => (cur[pi] = pc));
+      accepted = true;
+      break;
     }
-    if (!ok) {
+    if (!accepted) {
       for (const b of backups) {
-        if (b.ring) rings[b.pi] = b.ring;
+        rings[b.pi] = b.ring;
         if (b.pc) cur[b.pi] = b.pc;
       }
       rejected.add(best.key);
       continue;
     }
-    next.forEach(({ pi, pc }) => (cur[pi] = pc));
     count++;
     maxGap = Math.max(maxGap, best.gap);
   }
