@@ -1920,8 +1920,11 @@ function snapBackToBackJunctions(
   };
 
   // Her turdan sonra geometri değiştiği için adayları yeniden hesapla.
+  // Karşı sınırın uç noktası da adaydır: köşe-köşe birleşimini yalnız
+  // snapVertexClusters'a bırakmak alan dengelemesi yapılmadığı için geçerli
+  // parsellerde değişikliğin geri alınmasına yol açabiliyordu.
   for (let pass = 0; pass < parcels.length * 2; pass++) {
-    let best: { pi: number; vi: number; targetPi: number; target: Pt; gap: number } | null = null;
+    let best: { pi: number; vi: number; targetPi: number; target: Pt; gap: number; endpoint: boolean } | null = null;
 
     for (let pi = 0; pi < rings.length; pi++) {
       const src = cur[pi];
@@ -1941,13 +1944,14 @@ function snapBackToBackJunctions(
             const ab = sub(b, a);
             const l2 = dot(ab, ab);
             if (l2 < 1e-10) continue;
-            const t = dot(sub(q, a), ab) / l2;
-            // Uç noktalar zaten snapVertexClusters tarafından ele alınır.
-            if (t <= 1e-4 || t >= 1 - 1e-4) continue;
-            const target = add(a, mul(ab, t));
+            const rawT = dot(sub(q, a), ab) / l2;
+            if (rawT < -1e-6 || rawT > 1 + 1e-6) continue;
+            const t = Math.max(0, Math.min(1, rawT));
+            const endpoint = t <= 1e-4 || t >= 1 - 1e-4;
+            const target = endpoint ? (t <= 0.5 ? a : b) : add(a, mul(ab, t));
             const gap = dist(q, target);
             if (gap <= 1e-6 || gap > p.tolerance) continue;
-            if (!best || gap < best.gap) best = { pi, vi, targetPi: oi, target, gap };
+            if (!best || gap < best.gap) best = { pi, vi, targetPi: oi, target, gap, endpoint };
           }
         }
       }
@@ -1970,6 +1974,10 @@ function snapBackToBackJunctions(
     for (let pi = 0; pi < rings.length; pi++) {
       if (cur[pi]?.row === cur[best.pi]?.row) continue;
       const r = rings[pi];
+      if (best.endpoint) {
+        if (r.some((q) => dist(q, best.target) <= samePoint)) touched.add(pi);
+        continue;
+      }
       for (let ei = 0; ei < r.length; ei++) {
         const a = r[ei];
         const b = r[(ei + 1) % r.length];
@@ -1994,6 +2002,7 @@ function snapBackToBackJunctions(
         continue;
       }
       const r = rings[pi];
+      if (best.endpoint) continue;
       for (let ei = 0; ei < r.length; ei++) {
         const a = r[ei];
         const b = r[(ei + 1) % r.length];
