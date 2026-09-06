@@ -1,12 +1,12 @@
 import { optimizeBlock, DEFAULTS } from "@/lib/parcelation";
-import { parseDXF } from "@/lib/dxf";
-import { sampleDXF } from "@/lib/sample";
-const doc = parseDXF(sampleDXF());
-const blocks = doc.layers["ADA"] ?? [];
+import { parseDxf, polygonsOfLayer, linesOfLayer } from "@/lib/dxf";
+import { sampleDxf } from "@/lib/sample";
+const doc = parseDxf(sampleDxf());
+const blocks = polygonsOfLayer(doc, "ADA");
 const p = { ...DEFAULTS, tolerance: 2.0 };
 let worst = 0, pairs = 0;
 for (const [i, ringB] of blocks.entries()) {
-  const r = optimizeBlock(`A${i}`, `ADA ${i+1}`, ringB, doc.layers["YAPI_INSAA_HATTI"] ?? [], [], [], p);
+  const r = optimizeBlock(`A${i}`, `ADA ${i+1}`, ringB, linesOfLayer(doc, "YAPI_INSAA_HATTI"), [], [], p);
   console.log(`ADA ${i+1}: ${r.parcels.length} parsel, ${r.parcels.filter(x=>x.valid).length} geçerli`);
   const pts: [number,number,number][] = [];
   r.parcels.forEach((pc, pi) => pc.ring.forEach(q => pts.push([q[0], q[1], pi])));
