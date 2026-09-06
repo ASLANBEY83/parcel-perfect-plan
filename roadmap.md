@@ -42,6 +42,7 @@
 - [x] Sırt sırta T-bağlantı toleransı: karşı sıranın köşesine değil sınır çizgisine yaklaşan köşeler de tek noktaya taşınıyor; aynı köşeyi paylaşan komşu parseller birlikte güncelleniyor.
 - [x] Son tolerans sabitlemesi: köşe-köşe ve T-bağlantı kontrolleri birlikte kararlı hâle gelene kadar tekrarlanıyor; iç ortak nokta sabitken alan farkı ortak yol köşesi kaydırılarak dengeleniyor ve bu kesimde yola diklik şartı uygulanmıyor.
 - [x] 353ADA karşı taraf köşe birleşimi: karşı sınır çizgisinin uç noktasına yaklaşan köşeler de T-bağlantı geçişinde işleniyor; ortak iç köşe iki ucun ortasında sabitlenirken iki sıranın alanı kendi yol köşelerinde dengeleniyor. Doğrulama: 1,677 m açıklık 0 m, 18/18 geçerli, artık alan 0, regresyon 7/7.
+- [x] Tolerans kesinliği güçlendirmesi: köşe-köşe birleşiminde yalnız orta nokta değil, bağlantı üzerindeki alternatif ortak düğümler de deneniyor; kabul edilen çözümde iki sıra birebir aynı düğümü kullanıyor ve alan farkı yalnız yol köşelerinde dengeleniyor.
 
 - Turf halka kapanışı birebir eşitlendi ("First and last Position are not equivalent" hatası giderildi).
 - Alan doğrulama pass: artık alandan koşulları sağlayan yeni parseller üretilir, kalan küçük parçalar komşuya eklenir; kapatılamayan alan logda raporlanır.
