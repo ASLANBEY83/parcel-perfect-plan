@@ -2992,7 +2992,7 @@ export function optimizeBlock(
     name: opts.name,
     ring,
     frontages,
-    splitLine: splitMid,
+    splitLine: splitMid.length >= 2 ? extendLineToRing(splitMid, ring) : splitMid,
     parcels,
     leftover,
     leftoverArea,
