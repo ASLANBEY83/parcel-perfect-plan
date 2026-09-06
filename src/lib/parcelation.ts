@@ -1923,8 +1923,20 @@ function snapBackToBackJunctions(
   // Karşı sınırın uç noktası da adaydır: köşe-köşe birleşimini yalnız
   // snapVertexClusters'a bırakmak alan dengelemesi yapılmadığı için geçerli
   // parsellerde değişikliğin geri alınmasına yol açabiliyordu.
-  for (let pass = 0; pass < parcels.length * 2; pass++) {
-    let best: { pi: number; vi: number; targetPi: number; target: Pt; gap: number; endpoint: boolean } | null = null;
+  // Bir aday geçerliliği bozarsa bütün taramayı durdurma; yalnız o yönlü adayı
+  // ele ve aynı birleşimin ters yönünü / adanın diğer tarafındaki adayları dene.
+  const rejected = new Set<string>();
+  for (let pass = 0; pass < parcels.length * 8; pass++) {
+    let best: {
+      pi: number;
+      vi: number;
+      targetPi: number;
+      targetEi: number;
+      target: Pt;
+      gap: number;
+      endpoint: boolean;
+      key: string;
+    } | null = null;
 
     for (let pi = 0; pi < rings.length; pi++) {
       const src = cur[pi];
@@ -1951,7 +1963,9 @@ function snapBackToBackJunctions(
             const target = endpoint ? (t <= 0.5 ? a : b) : add(a, mul(ab, t));
             const gap = dist(q, target);
             if (gap <= 1e-6 || gap > p.tolerance) continue;
-            if (!best || gap < best.gap) best = { pi, vi, targetPi: oi, target, gap, endpoint };
+            const key = `${pi}:${vi}>${oi}:${ei}`;
+            if (rejected.has(key)) continue;
+            if (!best || gap < best.gap) best = { pi, vi, targetPi: oi, targetEi: ei, target, gap, endpoint, key };
           }
         }
       }
@@ -2041,9 +2055,8 @@ function snapBackToBackJunctions(
         if (b.ring) rings[b.pi] = b.ring;
         if (b.pc) cur[b.pi] = b.pc;
       }
-      // Bu adayın her tur yeniden seçilmesini önlemek için kaynak köşeyi bu
-      // geçişte adaylıktan çıkaracak kadar yol sınırına yaklaştırmak yerine dur.
-      break;
+      rejected.add(best.key);
+      continue;
     }
     next.forEach(({ pi, pc }) => (cur[pi] = pc));
     count++;
