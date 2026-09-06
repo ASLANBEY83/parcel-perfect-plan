@@ -2110,7 +2110,40 @@ function snapBackToBackJunctions(
 
 
 
+/** Bir ışının halka kenarlarıyla ilk kesişimini bulur (t>0). */
+function rayRingHit(o: Pt, d: Pt, ring: Ring): Pt | null {
+  let best: { t: number; pt: Pt } | null = null;
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i];
+    const b = ring[(i + 1) % ring.length];
+    const e = sub(b, a);
+    const den = d[0] * e[1] - d[1] * e[0];
+    if (Math.abs(den) < 1e-12) continue;
+    const w = sub(a, o);
+    const t = (w[0] * e[1] - w[1] * e[0]) / den;
+    const u = (w[0] * d[1] - w[1] * d[0]) / den;
+    if (t > 1e-9 && u >= -1e-9 && u <= 1 + 1e-9) {
+      if (!best || t < best.t) best = { t, pt: add(o, mul(d, t)) };
+    }
+  }
+  return best ? best.pt : null;
+}
+
+/** Ada ayrım hattının iki ucunu ada sınırına kadar uzatır. */
+function extendLineToRing(line: Pt[], ring: Ring): Pt[] {
+  if (line.length < 2) return line;
+  const out = line.map((p) => [p[0], p[1]] as Pt);
+  const startDir = norm(sub(out[0], out[1]));
+  const endDir = norm(sub(out[out.length - 1], out[out.length - 2]));
+  const s = rayRingHit(out[0], startDir, ring);
+  const e = rayRingHit(out[out.length - 1], endDir, ring);
+  if (s) out.unshift(s);
+  if (e) out.push(e);
+  return out;
+}
+
 export function optimizeBlock(
+
   ring0: Ring,
   buildingLines: Pt[][],
   p: Params,
