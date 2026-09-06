@@ -1721,15 +1721,17 @@ function snapVertexClusters(
   const tol = p.tolerance;
   if (!(tol > 0) || !parcels.length) return null;
 
-  type Ref = { pi: number; vi: number; pt: Pt };
+  type Ref = { pi: number; vi: number; pt: Pt; onRoad: boolean };
   const refs: Ref[] = [];
   const roadClearance = Math.min(0.25, tol * 0.2);
   parcels.forEach((pc, pi) =>
     pc.ring.forEach((q, vi) => {
-      // Alan dengelemesi yalnız yol tarafındaki köşeyi kaydırır. Son geometrik
-      // kümeleme bu serbest köşeleri iç düğümlerle birlikte taşımamalıdır.
-      if (roadLines.some((line) => nearestOnPolyline(q, line).d <= roadClearance)) return;
-      refs.push({ pi, vi, pt: q });
+      refs.push({
+        pi,
+        vi,
+        pt: q,
+        onRoad: roadLines.some((line) => nearestOnPolyline(q, line).d <= roadClearance),
+      });
     }),
   );
 
@@ -1744,6 +1746,9 @@ function snapVertexClusters(
   for (let i = 0; i < refs.length; i++)
     for (let j = i + 1; j < refs.length; j++) {
       if (refs[i].pi === refs[j].pi) continue; // aynı parselin iki köşesi birleştirilmez
+      // İki yol köşesi alan dengelemesi için serbest kalır. Ancak çiftin yalnız
+      // bir ucu yol kabul edilmişse iç kırığı küme dışında bırakma.
+      if (refs[i].onRoad && refs[j].onRoad) continue;
       if (dist(refs[i].pt, refs[j].pt) <= tol) union(i, j);
     }
 
@@ -1878,7 +1883,12 @@ function snapBackToBackJunctions(
         const owners: { pi: number; vi: number }[] = [];
         for (const oi of touched) {
           for (let ovi = 0; ovi < rings[oi].length; ovi++) {
-            if (dist(rings[oi][ovi], point) <= samePoint) owners.push({ pi: oi, vi: ovi });
+            const oq = rings[oi][ovi];
+            if (
+              nearestOnPolyline(oq, front).d <= interiorRoadClearance &&
+              dist(oq, point) <= p.tolerance
+            )
+              owners.push({ pi: oi, vi: ovi });
           }
         }
         if (new Set(owners.map((o) => o.pi)).size >= 2) candidates.push({ point, owners });
@@ -1901,8 +1911,11 @@ function snapBackToBackJunctions(
       const q = atChainage(front, s).pt;
       shared.owners.forEach(({ pi, vi }) => (rings[pi][vi] = [q[0], q[1]]));
     };
-    for (let k = 0; k <= 80; k++) {
-      const s = lo + ((hi - lo) * k) / 80;
+    // Dar alan aralıklarında kaba örnekleme geçerli çözümü atlayabiliyordu.
+    // Yol üzerindeki konumu santimetre altı çözünürlüğe yaklaşacak kadar tara.
+    const samples = Math.max(320, Math.ceil((hi - lo) / 0.02));
+    for (let k = 0; k <= samples; k++) {
+      const s = lo + ((hi - lo) * k) / samples;
       setRoadPoint(s);
       let score = 0;
       let valid = true;
@@ -1978,7 +1991,9 @@ function snapBackToBackJunctions(
     // denenir; ilk geçerli çözümde iki sıra da AYNI gerçek düğümü kullanır.
     // Alan farkı aşağıda yalnız her sıranın yol köşesinde karşılanır.
     const sharedTargets: Pt[] = best.endpoint
-      ? [0.5, 0, 1, 0.25, 0.75].map((t) => [
+      ? Array.from({ length: 41 }, (_, i) => i / 40)
+        .sort((a, b) => Math.abs(a - 0.5) - Math.abs(b - 0.5))
+        .map((t) => [
           source[0] + (best.target[0] - source[0]) * t,
           source[1] + (best.target[1] - source[1]) * t,
         ] as Pt)
