@@ -2487,6 +2487,23 @@ export function optimizeBlock(
 
   }
 
+  // SON TOLERANS KONTROLÜ: koşul garantisi ve alan doğrulama adımları yeni köşeler
+  // ürettiği için, sırt sırta yaklaşan köşeler burada TEKRAR tek noktada birleştirilir.
+  {
+    for (let pass = 0; pass < 3; pass++) {
+      const snapped = snapVertexClusters(parcels, rows, ring, buildingLines, frontages, roadLines, p);
+      if (!snapped) break;
+      parcels.length = 0;
+      parcels.push(...snapped.parcels);
+      toleranceUsed = Math.max(toleranceUsed, snapped.count);
+      log.push(
+        `Son tolerans kontrolü: ${snapped.count} köşe kümesi ${p.tolerance.toFixed(2)} m tolerans içinde tek noktada birleştirildi (en büyük açıklık ${snapped.maxGap.toFixed(2)} m).`,
+      );
+    }
+  }
+
+
+
 
 
   // Numaralandırma: kuzeybatı köşedeki parselden başlayıp saat ibresi yönünde
