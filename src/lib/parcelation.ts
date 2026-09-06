@@ -1790,7 +1790,10 @@ function snapVertexClusters(
       src.corner,
       src.row,
     );
-    if (!np) return null;
+    if (!np) {
+      out.push(src);
+      continue;
+    }
     out.push({ ...np, no: src.no });
   }
   const validBefore = parcels.filter((x) => x.valid).length;
