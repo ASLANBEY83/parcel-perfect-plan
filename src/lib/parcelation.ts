@@ -92,6 +92,8 @@ export interface BlockResult {
   name: string;
   ring: Ring;
   frontages: Pt[][];
+  /** Adayı ikiye bölen orta hat (sırt sırta sıralar arasındaki ifraz hattı) */
+  splitLine: Pt[];
   parcels: Parcel[];
   leftover: MultiPoly;
   leftoverArea: number;
@@ -2407,6 +2409,7 @@ export function optimizeBlock(
       name: opts.name,
       ring,
       frontages: [],
+      splitLine: [],
       parcels: [],
       leftover: blockMp,
       leftoverArea: ringArea(ring),
@@ -2956,6 +2959,7 @@ export function optimizeBlock(
     name: opts.name,
     ring,
     frontages,
+    splitLine: splitMid,
     parcels,
     leftover,
     leftoverArea,
