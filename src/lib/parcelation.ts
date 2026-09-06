@@ -1893,6 +1893,8 @@ function snapVertexClusters(
         continue;
       }
       next.forEach((n) => (cur[n.pi] = n.pc));
+      // Alan farkı, yol cephesindeki ortak köşe kaydırılarak dengelenir.
+      rebalanceRoadCorner(touched);
       count++;
       maxGap = Math.max(maxGap, gap);
       break;
