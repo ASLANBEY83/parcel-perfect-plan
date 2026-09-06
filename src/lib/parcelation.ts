@@ -2633,7 +2633,7 @@ export function optimizeBlock(
   // kırık noktasının tam üzerine taşınır; alan yol kenarı kaydırılarak dengelenir.
   solutions.forEach((s, i) => {
     if (!s) return;
-    const snap = snapRowToAdaVertices(rows[i], s, ring, buildingLines, frontages, roadLines, p, i);
+    const snap = snapRowToAdaVertices(rows[i], s, snapTargets, buildingLines, frontages, roadLines, p, i);
     if (!snap) return;
     s.parcels = snap.parcels;
     s.cuts = snap.cuts;
@@ -2650,7 +2650,7 @@ export function optimizeBlock(
   // SON KONTROL: kesim geometrisinden bağımsız olarak, tolerans içinde kalan tüm
   // parsel köşeleri (ve ada kırık noktaları) tek ortak noktada birleştirilir.
   {
-    const snapped = snapVertexClusters(parcels, rows, ring, buildingLines, frontages, roadLines, p);
+    const snapped = snapVertexClusters(parcels, rows, snapTargets, buildingLines, frontages, roadLines, p);
     if (snapped) {
       parcels.length = 0;
       parcels.push(...snapped.parcels);
@@ -2847,7 +2847,7 @@ export function optimizeBlock(
     const maxPass = Math.max(4, Math.min(12, parcels.length));
     for (let pass = 0; pass < maxPass; pass++) {
       let changed = false;
-      const snapped = snapVertexClusters(parcels, rows, ring, buildingLines, frontages, roadLines, p);
+      const snapped = snapVertexClusters(parcels, rows, snapTargets, buildingLines, frontages, roadLines, p);
       if (snapped) {
         parcels.length = 0;
         parcels.push(...snapped.parcels);
@@ -3001,7 +3001,7 @@ export function optimizeBlock(
     name: opts.name,
     ring,
     frontages,
-    splitLine: splitMid.length >= 2 ? extendLineToRing(splitMid, ring) : splitMid,
+    splitLine: splitFull.length >= 2 ? splitFull : splitMid,
     parcels,
     leftover,
     leftoverArea,
