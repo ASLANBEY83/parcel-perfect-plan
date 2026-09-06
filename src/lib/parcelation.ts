@@ -1723,7 +1723,15 @@ function snapVertexClusters(
 
   type Ref = { pi: number; vi: number; pt: Pt };
   const refs: Ref[] = [];
-  parcels.forEach((pc, pi) => pc.ring.forEach((q, vi) => refs.push({ pi, vi, pt: q })));
+  const roadClearance = Math.min(0.25, tol * 0.2);
+  parcels.forEach((pc, pi) =>
+    pc.ring.forEach((q, vi) => {
+      // Alan dengelemesi yalnız yol tarafındaki köşeyi kaydırır. Son geometrik
+      // kümeleme bu serbest köşeleri iç düğümlerle birlikte taşımamalıdır.
+      if (roadLines.some((line) => nearestOnPolyline(q, line).d <= roadClearance)) return;
+      refs.push({ pi, vi, pt: q });
+    }),
+  );
 
   // Union-find
   const parent = refs.map((_, i) => i);
@@ -1854,6 +1862,63 @@ function snapBackToBackJunctions(
     return np ? { ...np, no: src.no, ring: rings[pi].map((q) => [q[0], q[1]] as Pt) } : null;
   };
 
+  /**
+   * İç birleşim noktası sabitken, aynı kesimi paylaşan parsellerin eski alanını
+   * yol üzerindeki ortak köşeyi kaydırarak geri yaklaştırır. Bu noktada kesim
+   * hattının yola dik olması bilinçli olarak aranmaz.
+   */
+  const rebalanceAtRoadCorner = (row: number, touched: number[], targets: Map<number, number>) => {
+    const front = rows[row]?.front;
+    if (!front || touched.length < 2) return;
+    const candidates: { point: Pt; owners: { pi: number; vi: number }[] }[] = [];
+    for (const pi of touched) {
+      for (let vi = 0; vi < rings[pi].length; vi++) {
+        const point = rings[pi][vi];
+        if (nearestOnPolyline(point, front).d > interiorRoadClearance) continue;
+        const owners: { pi: number; vi: number }[] = [];
+        for (const oi of touched) {
+          for (let ovi = 0; ovi < rings[oi].length; ovi++) {
+            if (dist(rings[oi][ovi], point) <= samePoint) owners.push({ pi: oi, vi: ovi });
+          }
+        }
+        if (new Set(owners.map((o) => o.pi)).size >= 2) candidates.push({ point, owners });
+      }
+    }
+    const shared = candidates[0];
+    if (!shared) return;
+    const L = polylineLength(front);
+    const s0 = (() => {
+      let acc = 0;
+      const hit = nearestOnPolyline(shared.point, front);
+      for (let i = 0; i < hit.seg; i++) acc += dist(front[i], front[i + 1]);
+      return acc + dist(front[hit.seg], hit.pt);
+    })();
+    const span = Math.max(5, p.tolerance * 4);
+    const lo = Math.max(0, s0 - span);
+    const hi = Math.min(L, s0 + span);
+    let best: { s: number; score: number } | null = null;
+    const setRoadPoint = (s: number) => {
+      const q = atChainage(front, s).pt;
+      shared.owners.forEach(({ pi, vi }) => (rings[pi][vi] = [q[0], q[1]]));
+    };
+    for (let k = 0; k <= 80; k++) {
+      const s = lo + ((hi - lo) * k) / 80;
+      setRoadPoint(s);
+      let score = 0;
+      let valid = true;
+      for (const pi of touched) {
+        const np = reval(pi);
+        if (!np || (cur[pi]?.valid && !np.valid)) {
+          valid = false;
+          break;
+        }
+        score += Math.abs(np.area - (targets.get(pi) ?? np.area));
+      }
+      if (valid && (!best || score < best.score)) best = { s, score };
+    }
+    setRoadPoint(best?.s ?? s0);
+  };
+
   // Her turdan sonra geometri değiştiği için adayları yeniden hesapla.
   for (let pass = 0; pass < parcels.length * 2; pass++) {
     let best: { pi: number; vi: number; targetPi: number; target: Pt; gap: number } | null = null;
@@ -1942,6 +2007,15 @@ function snapBackToBackJunctions(
           break;
         }
       }
+    }
+    const sourceRow = cur[best.pi]?.row;
+    if (sourceRow !== undefined) {
+      const sameRowTouched = touchedList.filter((pi) => cur[pi]?.row === sourceRow);
+      rebalanceAtRoadCorner(
+        sourceRow,
+        sameRowTouched,
+        new Map(backups.filter((b) => sameRowTouched.includes(b.pi)).map((b) => [b.pi, b.pc?.area ?? 0])),
+      );
     }
     const next: { pi: number; pc: Parcel }[] = [];
     let ok = touchedList.length > 0;
@@ -2660,29 +2734,33 @@ export function optimizeBlock(
 
   }
 
-  // SON TOLERANS KONTROLÜ: koşul garantisi ve alan doğrulama adımları yeni köşeler
-  // ürettiği için, sırt sırta yaklaşan köşeler burada TEKRAR tek noktada birleştirilir.
+  // SON TOLERANS KONTROLÜ: köşe-köşe ve köşe-karşı sınır kontrolleri birbirinin
+  // ürettiği yeni düğümleri de görene kadar birlikte çalışır.
   {
-    for (let pass = 0; pass < 3; pass++) {
+    const maxPass = Math.max(4, Math.min(12, parcels.length));
+    for (let pass = 0; pass < maxPass; pass++) {
+      let changed = false;
       const snapped = snapVertexClusters(parcels, rows, ring, buildingLines, frontages, roadLines, p);
-      if (!snapped) break;
-      parcels.length = 0;
-      parcels.push(...snapped.parcels);
-      toleranceUsed = Math.max(toleranceUsed, snapped.count);
-      log.push(
-        `Son tolerans kontrolü: ${snapped.count} köşe kümesi ${p.tolerance.toFixed(2)} m tolerans içinde tek noktada birleştirildi (en büyük açıklık ${snapped.maxGap.toFixed(2)} m).`,
-      );
-    }
-
-    // Görseldeki 0,81 m örneği gibi köşe–karşı sınır T-bağlantılarını kapat.
-    const junctions = snapBackToBackJunctions(parcels, rows, buildingLines, frontages, roadLines, p);
-    if (junctions) {
-      parcels.length = 0;
-      parcels.push(...junctions.parcels);
-      toleranceUsed = Math.max(toleranceUsed, junctions.count);
-      log.push(
-        `Son tolerans kontrolü: ${junctions.count} köşe–karşı sınır bağlantısı tek noktada birleştirildi (en büyük açıklık ${junctions.maxGap.toFixed(2)} m).`,
-      );
+      if (snapped) {
+        parcels.length = 0;
+        parcels.push(...snapped.parcels);
+        toleranceUsed = Math.max(toleranceUsed, snapped.count);
+        changed = true;
+        log.push(
+          `Son tolerans kontrolü: ${snapped.count} iç köşe kümesi ${p.tolerance.toFixed(2)} m tolerans içinde tek noktada birleştirildi (en büyük açıklık ${snapped.maxGap.toFixed(2)} m).`,
+        );
+      }
+      const junctions = snapBackToBackJunctions(parcels, rows, buildingLines, frontages, roadLines, p);
+      if (junctions) {
+        parcels.length = 0;
+        parcels.push(...junctions.parcels);
+        toleranceUsed = Math.max(toleranceUsed, junctions.count);
+        changed = true;
+        log.push(
+          `Son tolerans kontrolü: ${junctions.count} köşe–karşı sınır bağlantısı tek noktada birleştirildi; alan yol köşesinde dengelendi (en büyük açıklık ${junctions.maxGap.toFixed(2)} m).`,
+        );
+      }
+      if (!changed) break;
     }
   }
 
