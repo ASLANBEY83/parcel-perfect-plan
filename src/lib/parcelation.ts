@@ -1776,6 +1776,75 @@ function snapVertexClusters(
     return np ? { ...np, no: src.no } : null;
   };
 
+  /**
+   * Köşe birleştirmesinden sonra oluşan alan farkı, parselin YOL CEPHESİNDEKİ
+   * ortak köşesi hat boyunca kaydırılarak dengelenir. Bu kesimde hattın yola
+   * dik olması bilinçli olarak aranmaz.
+   */
+  const rebalanceRoadCorner = (touched: number[]) => {
+    if (touched.length < 2) return;
+    const clearance = Math.min(0.25, tol * 0.2);
+    for (const line of roadLines) {
+      if (line.length < 2) continue;
+      for (const pi of touched) {
+        for (let vi = 0; vi < rings[pi]!.length; vi++) {
+          const point = rings[pi]![vi]!;
+          if (nearestOnPolyline(point, line).d > clearance) continue;
+          const owners: { pi: number; vi: number }[] = [];
+          for (const oi of touched)
+            for (let ovi = 0; ovi < rings[oi]!.length; ovi++) {
+              const oq = rings[oi]![ovi]!;
+              if (nearestOnPolyline(oq, line).d <= clearance && dist(oq, point) <= tol)
+                owners.push({ pi: oi, vi: ovi });
+            }
+          if (new Set(owners.map((o) => o.pi)).size < 2) continue;
+
+          const L = polylineLength(line);
+          const hit = nearestOnPolyline(point, line);
+          let acc = 0;
+          for (let i = 0; i < hit.seg; i++) acc += dist(line[i]!, line[i + 1]!);
+          const s0 = acc + dist(line[hit.seg]!, hit.pt);
+          const span = Math.max(3, tol * 4);
+          const lo = Math.max(0, s0 - span);
+          const hi = Math.min(L, s0 + span);
+          const ptBackup = owners.map((o) => ({ ...o, pt: [rings[o.pi]![o.vi]![0], rings[o.pi]![o.vi]![1]] as Pt }));
+          const curBackup = touched.map((ti) => ({ ti, pc: cur[ti]! }));
+          const base = touched.reduce((a, ti) => a + Math.abs(cur[ti]!.area - parcels[ti]!.area), 0);
+          const samples = Math.max(200, Math.ceil((hi - lo) / 0.02));
+          let best: { s: number; dev: number; ps: { ti: number; pc: Parcel }[] } | null = null;
+          for (let k = 0; k <= samples; k++) {
+            const s = lo + ((hi - lo) * k) / samples;
+            const q = atChainage(line, s).pt;
+            owners.forEach((o) => (rings[o.pi]![o.vi] = [q[0], q[1]]));
+            let dev = 0;
+            let ok = true;
+            const ps: { ti: number; pc: Parcel }[] = [];
+            for (const ti of touched) {
+              const np = reval(ti, rings[ti]!);
+              if (!np || (cur[ti]!.valid && !np.valid)) {
+                ok = false;
+                break;
+              }
+              dev += Math.abs(np.area - parcels[ti]!.area);
+              ps.push({ ti, pc: np });
+            }
+            if (ok && (!best || dev < best.dev)) best = { s, dev, ps };
+          }
+          ptBackup.forEach((b) => (rings[b.pi]![b.vi] = b.pt));
+          curBackup.forEach((b) => (cur[b.ti] = b.pc));
+          if (best && best.dev < base - 1e-6) {
+            const q = atChainage(line, best.s).pt;
+            owners.forEach((o) => (rings[o.pi]![o.vi] = [q[0], q[1]]));
+            best.ps.forEach((n) => (cur[n.ti] = n.pc));
+          }
+          return;
+        }
+      }
+    }
+  };
+
+
+
   for (const idxs of groups.values()) {
     const pts = idxs.map((i) => refs[i]!.pt);
     if (pts.length < 2) continue;
@@ -1824,6 +1893,8 @@ function snapVertexClusters(
         continue;
       }
       next.forEach((n) => (cur[n.pi] = n.pc));
+      // Alan farkı, yol cephesindeki ortak köşe kaydırılarak dengelenir.
+      rebalanceRoadCorner(touched);
       count++;
       maxGap = Math.max(maxGap, gap);
       break;
@@ -2454,7 +2525,13 @@ export function optimizeBlock(
     };
   }
 
+  // ADA AYRIM HATTI kırık noktaları da tolerans içinde birleşme hedefi olur:
+  // parsel köşesi ayrım hattı kırığına tolerans kadar yakınsa köşe TAM o noktaya taşınır.
+  const splitFull: Pt[] = splitMid.length >= 2 ? extendLineToRing(splitMid, ring) : [];
+  const snapTargets: Pt[] = [...ring, ...splitFull];
+
   // Sırt sırta sıralarda, orta hatta yakın karşılıklı köşeler 1 m toleransla tek noktaya indirgenir.
+
   let toleranceUsed = 0;
   if (solutions.length === 2 && solutions[0] && solutions[1]) {
     const [sa, sb] = solutions as [RowSolution, RowSolution];
@@ -2627,7 +2704,7 @@ export function optimizeBlock(
   // kırık noktasının tam üzerine taşınır; alan yol kenarı kaydırılarak dengelenir.
   solutions.forEach((s, i) => {
     if (!s) return;
-    const snap = snapRowToAdaVertices(rows[i], s, ring, buildingLines, frontages, roadLines, p, i);
+    const snap = snapRowToAdaVertices(rows[i], s, snapTargets, buildingLines, frontages, roadLines, p, i);
     if (!snap) return;
     s.parcels = snap.parcels;
     s.cuts = snap.cuts;
@@ -2644,7 +2721,7 @@ export function optimizeBlock(
   // SON KONTROL: kesim geometrisinden bağımsız olarak, tolerans içinde kalan tüm
   // parsel köşeleri (ve ada kırık noktaları) tek ortak noktada birleştirilir.
   {
-    const snapped = snapVertexClusters(parcels, rows, ring, buildingLines, frontages, roadLines, p);
+    const snapped = snapVertexClusters(parcels, rows, snapTargets, buildingLines, frontages, roadLines, p);
     if (snapped) {
       parcels.length = 0;
       parcels.push(...snapped.parcels);
@@ -2841,7 +2918,7 @@ export function optimizeBlock(
     const maxPass = Math.max(4, Math.min(12, parcels.length));
     for (let pass = 0; pass < maxPass; pass++) {
       let changed = false;
-      const snapped = snapVertexClusters(parcels, rows, ring, buildingLines, frontages, roadLines, p);
+      const snapped = snapVertexClusters(parcels, rows, snapTargets, buildingLines, frontages, roadLines, p);
       if (snapped) {
         parcels.length = 0;
         parcels.push(...snapped.parcels);
@@ -2995,7 +3072,7 @@ export function optimizeBlock(
     name: opts.name,
     ring,
     frontages,
-    splitLine: splitMid.length >= 2 ? extendLineToRing(splitMid, ring) : splitMid,
+    splitLine: splitFull.length >= 2 ? splitFull : splitMid,
     parcels,
     leftover,
     leftoverArea,
