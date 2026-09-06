@@ -1,9 +1,9 @@
-import { optimizeBlock, DEFAULTS } from "@/lib/parcelation";
+import { optimizeBlock, defaultParams } from "@/lib/parcelation";
 import { parseDxf, polygonsOfLayer, linesOfLayer } from "@/lib/dxf";
 import { sampleDxf } from "@/lib/sample";
 const doc = parseDxf(sampleDxf());
 const blocks = polygonsOfLayer(doc, "ADA");
-const p = { ...DEFAULTS, tolerance: 2.0 };
+const p = { ...defaultParams, tolerance: 2.0 };
 let worst = 0, pairs = 0;
 for (const [i, ringB] of blocks.entries()) {
   const r = optimizeBlock(`A${i}`, `ADA ${i+1}`, ringB, linesOfLayer(doc, "YAPI_INSAA_HATTI"), [], [], p);
