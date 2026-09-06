@@ -2137,10 +2137,13 @@ function extendLineToRing(line: Pt[], ring: Ring): Pt[] {
   const endDir = norm(sub(out[out.length - 1], out[out.length - 2]));
   const s = rayRingHit(out[0], startDir, ring);
   const e = rayRingHit(out[out.length - 1], endDir, ring);
-  if (s) out.unshift(s);
-  if (e) out.push(e);
+  // Uzatma, uç segmentin doğrultusunda olduğu için eski uç nokta gereksiz bir
+  // kırık gibi görünür; sınıra taşınan uç ile değiştirilir.
+  if (e) out[out.length - 1] = e;
+  if (s) out[0] = s;
   return out;
 }
+
 
 export function optimizeBlock(
 
