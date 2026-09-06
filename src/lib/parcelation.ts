@@ -2454,7 +2454,13 @@ export function optimizeBlock(
     };
   }
 
+  // ADA AYRIM HATTI kırık noktaları da tolerans içinde birleşme hedefi olur:
+  // parsel köşesi ayrım hattı kırığına tolerans kadar yakınsa köşe TAM o noktaya taşınır.
+  const splitFull: Pt[] = splitMid.length >= 2 ? extendLineToRing(splitMid, ring) : [];
+  const snapTargets: Pt[] = [...ring, ...splitFull];
+
   // Sırt sırta sıralarda, orta hatta yakın karşılıklı köşeler 1 m toleransla tek noktaya indirgenir.
+
   let toleranceUsed = 0;
   if (solutions.length === 2 && solutions[0] && solutions[1]) {
     const [sa, sb] = solutions as [RowSolution, RowSolution];
