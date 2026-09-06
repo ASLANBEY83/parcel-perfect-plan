@@ -6,7 +6,7 @@ const blocks = polygonsOfLayer(doc, "ADA");
 const p = { ...defaultParams, tolerance: 2.0 };
 let worst = 0, pairs = 0;
 for (const [i, ringB] of blocks.entries()) {
-  const r = optimizeBlock(`A${i}`, `ADA ${i+1}`, ringB, linesOfLayer(doc, "YAPI_INSAA_HATTI"), [], [], p);
+  const r = optimizeBlock(ringB, linesOfLayer(doc, "YAPI_INSAA_HATTI"), p, { id: `A${i}`, name: `ADA ${i + 1}` });
   console.log(`ADA ${i+1}: ${r.parcels.length} parsel, ${r.parcels.filter(x=>x.valid).length} geçerli`);
   const pts: [number,number,number][] = [];
   r.parcels.forEach((pc, pi) => pc.ring.forEach(q => pts.push([q[0], q[1], pi])));
