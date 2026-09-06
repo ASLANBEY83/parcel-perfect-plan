@@ -40,6 +40,7 @@
 - Koşul garantisi: artık parseller komşusuna birleştiriliyor veya parsel olarak üretilmiyor; üretilen tüm parseller koşulları sağlıyor.
 - Yapı yaklaşma sınırları DXF çıktısına `YAPI_YAKLASMA` katmanı olarak eklendi.
 - [x] Sırt sırta T-bağlantı toleransı: karşı sıranın köşesine değil sınır çizgisine yaklaşan köşeler de tek noktaya taşınıyor; aynı köşeyi paylaşan komşu parseller birlikte güncelleniyor.
+- [x] Son tolerans sabitlemesi: köşe-köşe ve T-bağlantı kontrolleri birlikte kararlı hâle gelene kadar tekrarlanıyor; iç ortak nokta sabitken alan farkı ortak yol köşesi kaydırılarak dengeleniyor ve bu kesimde yola diklik şartı uygulanmıyor.
 
 - Turf halka kapanışı birebir eşitlendi ("First and last Position are not equivalent" hatası giderildi).
 - Alan doğrulama pass: artık alandan koşulları sağlayan yeni parseller üretilir, kalan küçük parçalar komşuya eklenir; kapatılamayan alan logda raporlanır.
