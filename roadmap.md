@@ -39,6 +39,7 @@
 - Oval/elips adalar: uzun yol cephesine paralel, ada genişliğinin ~yarısı kadar ofsetli bant ile ada ikiye bölünüp mevcut blok/parsel algoritmaları uygulanıyor (`parallelSplitAt`, `bufferPolyline`).
 - Koşul garantisi: artık parseller komşusuna birleştiriliyor veya parsel olarak üretilmiyor; üretilen tüm parseller koşulları sağlıyor.
 - Yapı yaklaşma sınırları DXF çıktısına `YAPI_YAKLASMA` katmanı olarak eklendi.
+- [x] Sırt sırta T-bağlantı toleransı: karşı sıranın köşesine değil sınır çizgisine yaklaşan köşeler de tek noktaya taşınıyor; aynı köşeyi paylaşan komşu parseller birlikte güncelleniyor.
 
 - Turf halka kapanışı birebir eşitlendi ("First and last Position are not equivalent" hatası giderildi).
 - Alan doğrulama pass: artık alandan koşulları sağlayan yeni parseller üretilir, kalan küçük parçalar komşuya eklenir; kapatılamayan alan logda raporlanır.

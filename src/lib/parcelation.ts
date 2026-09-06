@@ -1820,6 +1820,156 @@ function snapVertexClusters(
   return { parcels: cur, count, maxGap };
 }
 
+/**
+ * Sırt sırta sıralarda bir kesim köşesi bazen karşı sıradaki bir KÖŞEYE değil,
+ * parsel kenarının ortasına yaklaşır (T-bağlantısı). Köşe-köşe kümelemesi bu
+ * durumu göremez. Bu son geçiş, içteki köşeyi karşı sıra sınırındaki en yakın
+ * izdüşüme taşır; aynı köşeyi paylaşan komşu parselleri de birlikte günceller.
+ */
+function snapBackToBackJunctions(
+  parcels: Parcel[],
+  rows: { ring: Ring; front: Pt[] }[],
+  buildingLines: Pt[][],
+  frontages: Pt[][],
+  roadLines: Pt[][],
+  p: Params,
+): { parcels: Parcel[]; count: number; maxGap: number } | null {
+  if (!(p.tolerance > 0) || parcels.length < 2) return null;
+
+  const cur = parcels.slice();
+  const rings = parcels.map((pc) => pc.ring.map((q) => [q[0], q[1]] as Pt));
+  let count = 0;
+  let maxGap = 0;
+  const samePoint = 1e-5;
+  const interiorRoadClearance = Math.min(0.25, p.tolerance * 0.2);
+
+  const reval = (pi: number): Parcel | null => {
+    const src = cur[pi];
+    if (!src) return null;
+    const front = rows[Math.min(src.row, rows.length - 1)]?.front ?? rows[0]?.front;
+    if (!front) return null;
+    const np = evaluateParcel(rings[pi], front, buildingLines, frontages, roadLines, p, src.corner, src.row);
+    // evaluateParcel ölçümleri sadeleştirilmiş halka üzerinde yapar. T-bağlantı
+    // düğümünü ise sonuç geometrisinde koru; aksi halde doğrusal ara nokta atılır.
+    return np ? { ...np, no: src.no, ring: rings[pi].map((q) => [q[0], q[1]] as Pt) } : null;
+  };
+
+  // Her turdan sonra geometri değiştiği için adayları yeniden hesapla.
+  for (let pass = 0; pass < parcels.length * 2; pass++) {
+    let best: { pi: number; vi: number; targetPi: number; target: Pt; gap: number } | null = null;
+
+    for (let pi = 0; pi < rings.length; pi++) {
+      const src = cur[pi];
+      if (!src) continue;
+      for (let vi = 0; vi < rings[pi].length; vi++) {
+        const q = rings[pi][vi];
+        // Yol/ada sınırındaki köşeler değil, yalnız iki sıranın arasındaki köşeler.
+        if (roadLines.some((l) => nearestOnPolyline(q, l).d <= interiorRoadClearance)) continue;
+
+        for (let oi = 0; oi < rings.length; oi++) {
+          const other = cur[oi];
+          if (!other || other.row === src.row) continue;
+          const r = rings[oi];
+          for (let ei = 0; ei < r.length; ei++) {
+            const a = r[ei];
+            const b = r[(ei + 1) % r.length];
+            const ab = sub(b, a);
+            const l2 = dot(ab, ab);
+            if (l2 < 1e-10) continue;
+            const t = dot(sub(q, a), ab) / l2;
+            // Uç noktalar zaten snapVertexClusters tarafından ele alınır.
+            if (t <= 1e-4 || t >= 1 - 1e-4) continue;
+            const target = add(a, mul(ab, t));
+            const gap = dist(q, target);
+            if (gap <= 1e-6 || gap > p.tolerance) continue;
+            if (!best || gap < best.gap) best = { pi, vi, targetPi: oi, target, gap };
+          }
+        }
+      }
+    }
+
+    if (!best) break;
+    const source = rings[best.pi][best.vi];
+    // Aynı fiziksel köşeyi kullanan aynı sıradaki komşular ile karşı sınırdaki
+    // parseller birlikte güncellenir. Böylece birleşim yalnız çizgi üzerinde
+    // kalmaz; iki tarafta da birebir aynı koordinatlı gerçek düğüm olur.
+    const touched = new Set<number>();
+    for (let pi = 0; pi < rings.length; pi++) {
+      if (cur[pi]?.row !== cur[best.pi]?.row) continue;
+      for (let vi = 0; vi < rings[pi].length; vi++) {
+        if (dist(rings[pi][vi], source) <= samePoint) {
+          touched.add(pi);
+        }
+      }
+    }
+    for (let pi = 0; pi < rings.length; pi++) {
+      if (cur[pi]?.row === cur[best.pi]?.row) continue;
+      const r = rings[pi];
+      for (let ei = 0; ei < r.length; ei++) {
+        const a = r[ei];
+        const b = r[(ei + 1) % r.length];
+        const ab = sub(b, a);
+        const l2 = dot(ab, ab);
+        if (l2 < 1e-10) continue;
+        const t = dot(sub(best.target, a), ab) / l2;
+        const projected = add(a, mul(ab, t));
+        if (t > 1e-6 && t < 1 - 1e-6 && dist(projected, best.target) <= 1e-5) {
+          touched.add(pi);
+          break;
+        }
+      }
+    }
+
+    const touchedList = [...touched];
+    const backups = touchedList.map((pi) => ({ pi, ring: rings[pi].map((q) => [q[0], q[1]] as Pt), pc: cur[pi] }));
+    for (const pi of touchedList) {
+      if (cur[pi]?.row === cur[best.pi]?.row) {
+        for (let vi = 0; vi < rings[pi].length; vi++)
+          if (dist(rings[pi][vi], source) <= samePoint) rings[pi][vi] = [best.target[0], best.target[1]];
+        continue;
+      }
+      const r = rings[pi];
+      for (let ei = 0; ei < r.length; ei++) {
+        const a = r[ei];
+        const b = r[(ei + 1) % r.length];
+        const ab = sub(b, a);
+        const l2 = dot(ab, ab);
+        if (l2 < 1e-10) continue;
+        const t = dot(sub(best.target, a), ab) / l2;
+        const projected = add(a, mul(ab, t));
+        if (t > 1e-6 && t < 1 - 1e-6 && dist(projected, best.target) <= 1e-5) {
+          r.splice(ei + 1, 0, [best.target[0], best.target[1]]);
+          break;
+        }
+      }
+    }
+    const next: { pi: number; pc: Parcel }[] = [];
+    let ok = touchedList.length > 0;
+    for (const pi of touchedList) {
+      const np = reval(pi);
+      if (!np || (cur[pi]?.valid && !np.valid)) {
+        ok = false;
+        break;
+      }
+      next.push({ pi, pc: np });
+    }
+    if (!ok) {
+      for (const b of backups) {
+        if (b.ring) rings[b.pi] = b.ring;
+        if (b.pc) cur[b.pi] = b.pc;
+      }
+      // Bu adayın her tur yeniden seçilmesini önlemek için kaynak köşeyi bu
+      // geçişte adaylıktan çıkaracak kadar yol sınırına yaklaştırmak yerine dur.
+      break;
+    }
+    next.forEach(({ pi, pc }) => (cur[pi] = pc));
+    count++;
+    maxGap = Math.max(maxGap, best.gap);
+  }
+
+  return count ? { parcels: cur, count, maxGap } : null;
+}
+
 
 
 export function optimizeBlock(
@@ -2521,6 +2671,17 @@ export function optimizeBlock(
       toleranceUsed = Math.max(toleranceUsed, snapped.count);
       log.push(
         `Son tolerans kontrolü: ${snapped.count} köşe kümesi ${p.tolerance.toFixed(2)} m tolerans içinde tek noktada birleştirildi (en büyük açıklık ${snapped.maxGap.toFixed(2)} m).`,
+      );
+    }
+
+    // Görseldeki 0,81 m örneği gibi köşe–karşı sınır T-bağlantılarını kapat.
+    const junctions = snapBackToBackJunctions(parcels, rows, buildingLines, frontages, roadLines, p);
+    if (junctions) {
+      parcels.length = 0;
+      parcels.push(...junctions.parcels);
+      toleranceUsed = Math.max(toleranceUsed, junctions.count);
+      log.push(
+        `Son tolerans kontrolü: ${junctions.count} köşe–karşı sınır bağlantısı tek noktada birleştirildi (en büyük açıklık ${junctions.maxGap.toFixed(2)} m).`,
       );
     }
   }
