@@ -159,6 +159,7 @@
   --color-buildline: var(--buildline);
   --color-envelope: var(--envelope);
   --color-envelope-line: var(--envelope-line);
+  --color-splitline: var(--splitline);
   --color-leftover: var(--leftover);
   --color-label: var(--label);
   --color-measure: var(--measure);
@@ -202,6 +203,7 @@
   --buildline: oklch(0.7 0.16 300);
   --envelope: oklch(0.78 0.13 195 / 0.12);
   --envelope-line: oklch(0.78 0.14 195 / 0.6);
+  --splitline: oklch(0.86 0.19 90);
   --leftover: oklch(0.6 0.05 240 / 0.35);
   --label: oklch(0.9 0.01 230);
   --measure: oklch(0.86 0.19 90);

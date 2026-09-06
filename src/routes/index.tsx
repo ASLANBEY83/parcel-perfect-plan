@@ -68,13 +68,14 @@ export const Route = createFileRoute("/")({
   component: Index,
 });
 
-const LAYER_KEYS: (keyof LayerVisibility)[] = ["ADA", "PARSELLER", "YAPI_INSAA_HATTI", "YAPI_YAKLASMA", "YAPI_BLOKLARI"];
+const LAYER_KEYS: (keyof LayerVisibility)[] = ["ADA", "PARSELLER", "YAPI_INSAA_HATTI", "YAPI_YAKLASMA", "YAPI_BLOKLARI", "ADA_ORTA_HAT"];
 const LAYER_LABELS: Record<keyof LayerVisibility, string> = {
   ADA: "Ada sınırı",
   PARSELLER: "Parseller",
   YAPI_INSAA_HATTI: "Yapı inşaat hattı",
   YAPI_YAKLASMA: "Yapı yaklaşma sınırı",
   YAPI_BLOKLARI: "Yapı blokları",
+  ADA_ORTA_HAT: "Ada orta hattı",
 };
 
 /** Üretilen her parselasyon çözümü ayrı bir "alternatif katman" olarak saklanır. */
@@ -134,6 +135,7 @@ function Index() {
     YAPI_INSAA_HATTI: true,
     YAPI_YAKLASMA: true,
     YAPI_BLOKLARI: true,
+    ADA_ORTA_HAT: true,
   });
   const fileRef = useRef<HTMLInputElement>(null);
 
