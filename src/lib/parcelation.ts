@@ -1776,6 +1776,75 @@ function snapVertexClusters(
     return np ? { ...np, no: src.no } : null;
   };
 
+  /**
+   * Köşe birleştirmesinden sonra oluşan alan farkı, parselin YOL CEPHESİNDEKİ
+   * ortak köşesi hat boyunca kaydırılarak dengelenir. Bu kesimde hattın yola
+   * dik olması bilinçli olarak aranmaz.
+   */
+  const rebalanceRoadCorner = (touched: number[]) => {
+    if (touched.length < 2) return;
+    const clearance = Math.min(0.25, tol * 0.2);
+    for (const line of roadLines) {
+      if (line.length < 2) continue;
+      for (const pi of touched) {
+        for (let vi = 0; vi < rings[pi]!.length; vi++) {
+          const point = rings[pi]![vi]!;
+          if (nearestOnPolyline(point, line).d > clearance) continue;
+          const owners: { pi: number; vi: number }[] = [];
+          for (const oi of touched)
+            for (let ovi = 0; ovi < rings[oi]!.length; ovi++) {
+              const oq = rings[oi]![ovi]!;
+              if (nearestOnPolyline(oq, line).d <= clearance && dist(oq, point) <= tol)
+                owners.push({ pi: oi, vi: ovi });
+            }
+          if (new Set(owners.map((o) => o.pi)).size < 2) continue;
+
+          const L = polylineLength(line);
+          const hit = nearestOnPolyline(point, line);
+          let acc = 0;
+          for (let i = 0; i < hit.seg; i++) acc += dist(line[i]!, line[i + 1]!);
+          const s0 = acc + dist(line[hit.seg]!, hit.pt);
+          const span = Math.max(3, tol * 4);
+          const lo = Math.max(0, s0 - span);
+          const hi = Math.min(L, s0 + span);
+          const ptBackup = owners.map((o) => ({ ...o, pt: [rings[o.pi]![o.vi]![0], rings[o.pi]![o.vi]![1]] as Pt }));
+          const curBackup = touched.map((ti) => ({ ti, pc: cur[ti]! }));
+          const base = touched.reduce((a, ti) => a + Math.abs(cur[ti]!.area - parcels[ti]!.area), 0);
+          const samples = Math.max(200, Math.ceil((hi - lo) / 0.02));
+          let best: { s: number; dev: number; ps: { ti: number; pc: Parcel }[] } | null = null;
+          for (let k = 0; k <= samples; k++) {
+            const s = lo + ((hi - lo) * k) / samples;
+            const q = atChainage(line, s).pt;
+            owners.forEach((o) => (rings[o.pi]![o.vi] = [q[0], q[1]]));
+            let dev = 0;
+            let ok = true;
+            const ps: { ti: number; pc: Parcel }[] = [];
+            for (const ti of touched) {
+              const np = reval(ti, rings[ti]!);
+              if (!np || (cur[ti]!.valid && !np.valid)) {
+                ok = false;
+                break;
+              }
+              dev += Math.abs(np.area - parcels[ti]!.area);
+              ps.push({ ti, pc: np });
+            }
+            if (ok && (!best || dev < best.dev)) best = { s, dev, ps };
+          }
+          ptBackup.forEach((b) => (rings[b.pi]![b.vi] = b.pt));
+          curBackup.forEach((b) => (cur[b.ti] = b.pc));
+          if (best && best.dev < base - 1e-6) {
+            const q = atChainage(line, best.s).pt;
+            owners.forEach((o) => (rings[o.pi]![o.vi] = [q[0], q[1]]));
+            best.ps.forEach((n) => (cur[n.ti] = n.pc));
+          }
+          return;
+        }
+      }
+    }
+  };
+
+
+
   for (const idxs of groups.values()) {
     const pts = idxs.map((i) => refs[i]!.pt);
     if (pts.length < 2) continue;
