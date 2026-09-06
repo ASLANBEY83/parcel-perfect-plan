@@ -1920,8 +1920,23 @@ function snapBackToBackJunctions(
   };
 
   // Her turdan sonra geometri değiştiği için adayları yeniden hesapla.
-  for (let pass = 0; pass < parcels.length * 2; pass++) {
-    let best: { pi: number; vi: number; targetPi: number; target: Pt; gap: number } | null = null;
+  // Karşı sınırın uç noktası da adaydır: köşe-köşe birleşimini yalnız
+  // snapVertexClusters'a bırakmak alan dengelemesi yapılmadığı için geçerli
+  // parsellerde değişikliğin geri alınmasına yol açabiliyordu.
+  // Bir aday geçerliliği bozarsa bütün taramayı durdurma; yalnız o yönlü adayı
+  // ele ve aynı birleşimin ters yönünü / adanın diğer tarafındaki adayları dene.
+  const rejected = new Set<string>();
+  for (let pass = 0; pass < parcels.length * 8; pass++) {
+    let best: {
+      pi: number;
+      vi: number;
+      targetPi: number;
+      targetEi: number;
+      target: Pt;
+      gap: number;
+      endpoint: boolean;
+      key: string;
+    } | null = null;
 
     for (let pi = 0; pi < rings.length; pi++) {
       const src = cur[pi];
@@ -1941,13 +1956,16 @@ function snapBackToBackJunctions(
             const ab = sub(b, a);
             const l2 = dot(ab, ab);
             if (l2 < 1e-10) continue;
-            const t = dot(sub(q, a), ab) / l2;
-            // Uç noktalar zaten snapVertexClusters tarafından ele alınır.
-            if (t <= 1e-4 || t >= 1 - 1e-4) continue;
-            const target = add(a, mul(ab, t));
+            const rawT = dot(sub(q, a), ab) / l2;
+            if (rawT < -1e-6 || rawT > 1 + 1e-6) continue;
+            const t = Math.max(0, Math.min(1, rawT));
+            const endpoint = t <= 1e-4 || t >= 1 - 1e-4;
+            const target = endpoint ? (t <= 0.5 ? a : b) : add(a, mul(ab, t));
             const gap = dist(q, target);
             if (gap <= 1e-6 || gap > p.tolerance) continue;
-            if (!best || gap < best.gap) best = { pi, vi, targetPi: oi, target, gap };
+            const key = `${pi}:${vi}>${oi}:${ei}`;
+            if (rejected.has(key)) continue;
+            if (!best || gap < best.gap) best = { pi, vi, targetPi: oi, targetEi: ei, target, gap, endpoint, key };
           }
         }
       }
@@ -1955,6 +1973,12 @@ function snapBackToBackJunctions(
 
     if (!best) break;
     const source = rings[best.pi][best.vi];
+    // Köşe-köşe durumunda iki sıradan yalnız birini diğerine taşımak, özellikle
+    // köşe parselde yapı zarfını bozabiliyor. Ortak düğümü iki ucun ortasında
+    // kurup alan farkını her iki sıranın kendi yol köşesinde karşıla.
+    const sharedTarget: Pt = best.endpoint
+      ? [(source[0] + best.target[0]) / 2, (source[1] + best.target[1]) / 2]
+      : best.target;
     // Aynı fiziksel köşeyi kullanan aynı sıradaki komşular ile karşı sınırdaki
     // parseller birlikte güncellenir. Böylece birleşim yalnız çizgi üzerinde
     // kalmaz; iki tarafta da birebir aynı koordinatlı gerçek düğüm olur.
@@ -1970,6 +1994,10 @@ function snapBackToBackJunctions(
     for (let pi = 0; pi < rings.length; pi++) {
       if (cur[pi]?.row === cur[best.pi]?.row) continue;
       const r = rings[pi];
+      if (best.endpoint) {
+        if (r.some((q) => dist(q, best.target) <= samePoint)) touched.add(pi);
+        continue;
+      }
       for (let ei = 0; ei < r.length; ei++) {
         const a = r[ei];
         const b = r[(ei + 1) % r.length];
@@ -1990,10 +2018,15 @@ function snapBackToBackJunctions(
     for (const pi of touchedList) {
       if (cur[pi]?.row === cur[best.pi]?.row) {
         for (let vi = 0; vi < rings[pi].length; vi++)
-          if (dist(rings[pi][vi], source) <= samePoint) rings[pi][vi] = [best.target[0], best.target[1]];
+          if (dist(rings[pi][vi], source) <= samePoint) rings[pi][vi] = [sharedTarget[0], sharedTarget[1]];
         continue;
       }
       const r = rings[pi];
+      if (best.endpoint) {
+        for (let vi = 0; vi < r.length; vi++)
+          if (dist(r[vi], best.target) <= samePoint) r[vi] = [sharedTarget[0], sharedTarget[1]];
+        continue;
+      }
       for (let ei = 0; ei < r.length; ei++) {
         const a = r[ei];
         const b = r[(ei + 1) % r.length];
@@ -2008,11 +2041,11 @@ function snapBackToBackJunctions(
         }
       }
     }
-    const sourceRow = cur[best.pi]?.row;
-    if (sourceRow !== undefined) {
-      const sameRowTouched = touchedList.filter((pi) => cur[pi]?.row === sourceRow);
+    const touchedRows = [...new Set(touchedList.map((pi) => cur[pi]?.row).filter((row): row is number => row !== undefined))];
+    for (const touchedRow of touchedRows) {
+      const sameRowTouched = touchedList.filter((pi) => cur[pi]?.row === touchedRow);
       rebalanceAtRoadCorner(
-        sourceRow,
+        touchedRow,
         sameRowTouched,
         new Map(backups.filter((b) => sameRowTouched.includes(b.pi)).map((b) => [b.pi, b.pc?.area ?? 0])),
       );
@@ -2032,9 +2065,8 @@ function snapBackToBackJunctions(
         if (b.ring) rings[b.pi] = b.ring;
         if (b.pc) cur[b.pi] = b.pc;
       }
-      // Bu adayın her tur yeniden seçilmesini önlemek için kaynak köşeyi bu
-      // geçişte adaylıktan çıkaracak kadar yol sınırına yaklaştırmak yerine dur.
-      break;
+      rejected.add(best.key);
+      continue;
     }
     next.forEach(({ pi, pc }) => (cur[pi] = pc));
     count++;
