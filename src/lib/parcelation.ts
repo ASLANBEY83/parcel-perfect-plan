@@ -1747,56 +1747,79 @@ function snapVertexClusters(
     else groups.set(r, [i]);
   });
 
-  // Yeni köşe konumları
-  const newRings = parcels.map((pc) => pc.ring.map((q) => [q[0], q[1]] as Pt));
+  // Yeni köşe konumları — kümeler TEK TEK uygulanır; bir küme geçerliliği
+  // düşürüyorsa yalnızca o küme geri alınır (diğer birleştirmeler korunur).
+  const cur: Parcel[] = parcels.slice();
+  const rings = parcels.map((pc) => pc.ring.map((q) => [q[0], q[1]] as Pt));
   let count = 0;
   let maxGap = 0;
+
+  const reval = (i: number, ring: Pt[]): Parcel | null => {
+    const src = parcels[i]!;
+    const front = rows[Math.min(src.row, rows.length - 1)]?.front ?? rows[0]!.front;
+    const np = evaluateParcel(ring, front, buildingLines, frontages, roadLines, p, src.corner, src.row);
+    return np ? { ...np, no: src.no } : null;
+  };
+
   for (const idxs of groups.values()) {
-    const pts = idxs.map((i) => refs[i].pt);
-    // Küme içinde ada kırık noktası varsa hedef O noktadır.
-    let target: Pt | null = null;
+    const pts = idxs.map((i) => refs[i]!.pt);
+    if (pts.length < 2) continue;
+
+    // Hedef adayları: (1) ada kırık noktası, (2) küme ortalaması, (3) küme köşeleri.
+    const cands: Pt[] = [];
+    let ada: Pt | null = null;
+    let adaD = Infinity;
     for (const q of pts) {
       const av = nearestAdaVertex(q, adaVertices, tol);
-      if (av && (!target || av.d < dist(q, target))) target = av.pt;
+      if (av && av.d < adaD) {
+        adaD = av.d;
+        ada = av.pt;
+      }
     }
-    if (!target) {
-      if (pts.length < 2) continue;
-      target = [
-        pts.reduce((a, q) => a + q[0], 0) / pts.length,
-        pts.reduce((a, q) => a + q[1], 0) / pts.length,
-      ];
-    }
-    const gap = Math.max(...pts.map((q) => dist(q, target!)));
-    if (gap < 1e-6) continue;
-    idxs.forEach((i) => {
-      newRings[refs[i].pi][refs[i].vi] = target!;
-    });
-    count++;
-    maxGap = Math.max(maxGap, gap);
-  }
-  if (!count) return null;
+    if (ada) cands.push(ada);
+    cands.push([
+      pts.reduce((a, q) => a + q[0], 0) / pts.length,
+      pts.reduce((a, q) => a + q[1], 0) / pts.length,
+    ]);
+    for (const q of pts) cands.push([q[0], q[1]]);
 
-  const out: Parcel[] = [];
-  for (let i = 0; i < parcels.length; i++) {
-    const src = parcels[i];
-    const front = rows[Math.min(src.row, rows.length - 1)]?.front ?? rows[0].front;
-    const np = evaluateParcel(
-      newRings[i],
-      front,
-      buildingLines,
-      frontages,
-      roadLines,
-      p,
-      src.corner,
-      src.row,
-    );
-    if (!np) return null;
-    out.push({ ...np, no: src.no });
+    const touched = [...new Set(idxs.map((i) => refs[i]!.pi))];
+    for (const target of cands) {
+      const gap = Math.max(...pts.map((q) => dist(q, target)));
+      if (gap < 1e-6) break;
+      const backup = touched.map((pi) => ({ pi, ring: rings[pi]!.map((q) => [q[0], q[1]] as Pt), pc: cur[pi]! }));
+      idxs.forEach((i) => {
+        rings[refs[i]!.pi]![refs[i]!.vi] = [target[0], target[1]];
+      });
+      let ok = true;
+      const next: { pi: number; pc: Parcel }[] = [];
+      for (const pi of touched) {
+        const np = reval(pi, rings[pi]!);
+        if (!np || (cur[pi]!.valid && !np.valid)) {
+          ok = false;
+          break;
+        }
+        next.push({ pi, pc: np });
+      }
+      if (!ok) {
+        backup.forEach((b) => {
+          rings[b.pi] = b.ring;
+          cur[b.pi] = b.pc;
+        });
+        continue;
+      }
+      next.forEach((n) => (cur[n.pi] = n.pc));
+      count++;
+      maxGap = Math.max(maxGap, gap);
+      break;
+    }
   }
-  const validBefore = parcels.filter((x) => x.valid).length;
-  if (out.filter((x) => x.valid).length < validBefore) return null;
-  return { parcels: out, count, maxGap };
+
+
+  if (!count) return null;
+  return { parcels: cur, count, maxGap };
 }
+
 
 
 export function optimizeBlock(
@@ -2486,6 +2509,23 @@ export function optimizeBlock(
       );
 
   }
+
+  // SON TOLERANS KONTROLÜ: koşul garantisi ve alan doğrulama adımları yeni köşeler
+  // ürettiği için, sırt sırta yaklaşan köşeler burada TEKRAR tek noktada birleştirilir.
+  {
+    for (let pass = 0; pass < 3; pass++) {
+      const snapped = snapVertexClusters(parcels, rows, ring, buildingLines, frontages, roadLines, p);
+      if (!snapped) break;
+      parcels.length = 0;
+      parcels.push(...snapped.parcels);
+      toleranceUsed = Math.max(toleranceUsed, snapped.count);
+      log.push(
+        `Son tolerans kontrolü: ${snapped.count} köşe kümesi ${p.tolerance.toFixed(2)} m tolerans içinde tek noktada birleştirildi (en büyük açıklık ${snapped.maxGap.toFixed(2)} m).`,
+      );
+    }
+  }
+
+
 
 
 
