@@ -1747,12 +1747,22 @@ function snapVertexClusters(
     else groups.set(r, [i]);
   });
 
-  // Yeni köşe konumları
-  const newRings = parcels.map((pc) => pc.ring.map((q) => [q[0], q[1]] as Pt));
+  // Yeni köşe konumları — kümeler TEK TEK uygulanır; bir küme geçerliliği
+  // düşürüyorsa yalnızca o küme geri alınır (diğer birleştirmeler korunur).
+  const cur: Parcel[] = parcels.slice();
+  const rings = parcels.map((pc) => pc.ring.map((q) => [q[0], q[1]] as Pt));
   let count = 0;
   let maxGap = 0;
+
+  const reval = (i: number, ring: Pt[]): Parcel | null => {
+    const src = parcels[i]!;
+    const front = rows[Math.min(src.row, rows.length - 1)]?.front ?? rows[0]!.front;
+    const np = evaluateParcel(ring, front, buildingLines, frontages, roadLines, p, src.corner, src.row);
+    return np ? { ...np, no: src.no } : null;
+  };
+
   for (const idxs of groups.values()) {
-    const pts = idxs.map((i) => refs[i].pt);
+    const pts = idxs.map((i) => refs[i]!.pt);
     // Küme içinde ada kırık noktası varsa hedef O noktadır.
     let target: Pt | null = null;
     for (const q of pts) {
@@ -1768,38 +1778,38 @@ function snapVertexClusters(
     }
     const gap = Math.max(...pts.map((q) => dist(q, target!)));
     if (gap < 1e-6) continue;
+
+    const touched = [...new Set(idxs.map((i) => refs[i]!.pi))];
+    const backup = touched.map((pi) => ({ pi, ring: rings[pi]!.map((q) => [q[0], q[1]] as Pt), pc: cur[pi]! }));
     idxs.forEach((i) => {
-      newRings[refs[i].pi][refs[i].vi] = target!;
+      rings[refs[i]!.pi]![refs[i]!.vi] = [target![0], target![1]];
     });
+    let ok = true;
+    const next: { pi: number; pc: Parcel }[] = [];
+    for (const pi of touched) {
+      const np = reval(pi, rings[pi]!);
+      if (!np || (cur[pi]!.valid && !np.valid)) {
+        ok = false;
+        break;
+      }
+      next.push({ pi, pc: np });
+    }
+    if (!ok) {
+      backup.forEach((b) => {
+        rings[b.pi] = b.ring;
+        cur[b.pi] = b.pc;
+      });
+      continue;
+    }
+    next.forEach((n) => (cur[n.pi] = n.pc));
     count++;
     maxGap = Math.max(maxGap, gap);
   }
-  if (!count) return null;
 
-  const out: Parcel[] = [];
-  for (let i = 0; i < parcels.length; i++) {
-    const src = parcels[i];
-    const front = rows[Math.min(src.row, rows.length - 1)]?.front ?? rows[0].front;
-    const np = evaluateParcel(
-      newRings[i],
-      front,
-      buildingLines,
-      frontages,
-      roadLines,
-      p,
-      src.corner,
-      src.row,
-    );
-    if (!np) {
-      out.push(src);
-      continue;
-    }
-    out.push({ ...np, no: src.no });
-  }
-  const validBefore = parcels.filter((x) => x.valid).length;
-  if (out.filter((x) => x.valid).length < validBefore) return null;
-  return { parcels: out, count, maxGap };
+  if (!count) return null;
+  return { parcels: cur, count, maxGap };
 }
+
 
 
 export function optimizeBlock(
