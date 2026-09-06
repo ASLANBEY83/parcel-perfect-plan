@@ -10,6 +10,7 @@ export interface LayerVisibility {
   YAPI_INSAA_HATTI: boolean;
   YAPI_YAKLASMA: boolean;
   YAPI_BLOKLARI: boolean;
+  ADA_ORTA_HAT: boolean;
 }
 
 export interface BasemapConfig {
@@ -445,6 +446,28 @@ export const PlanViewer = memo(function PlanViewer({
                 />
               )),
           )}
+
+        {layers.ADA_ORTA_HAT &&
+          blocks
+            .filter((b) => b.splitLine && b.splitLine.length >= 2)
+            .flatMap((b) => [
+              <polyline
+                key={`${b.id}-mid`}
+                points={poly(b.splitLine)}
+                className="pointer-events-none fill-none stroke-splitline"
+                strokeWidth={1.8}
+                strokeDasharray="12 5"
+              />,
+              ...b.splitLine.map((q, i) => (
+                <circle
+                  key={`${b.id}-mid-v-${i}`}
+                  cx={q[0] * view.z + view.x}
+                  cy={-q[1] * view.z + view.y}
+                  r={2.6}
+                  className="pointer-events-none fill-splitline"
+                />
+              )),
+            ])}
 
         {layers.YAPI_INSAA_HATTI &&
           buildingLines.map((l, i) => (
