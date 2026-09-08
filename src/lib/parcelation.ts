@@ -2280,9 +2280,11 @@ export function optimizeBlock(
   // Ada sınırlarının tamamı yola cephelidir: her ada kenarından frontSetback kadar ön çekme uygulanır.
   const roadLines: Pt[][] = roadChains(ring);
 
-  const blockMp: MultiPoly = publicAreas.length
-    ? mpDifference([[ring]], publicAreas.map((r) => [r] as Poly))
-    : [[ring]];
+  const blockMp: MultiPoly = [[ring]];
+  // Artık alan hesabında kamu alanı ada dışıdır.
+  const netMp: MultiPoly = publicAreas.length
+    ? mpDifference(blockMp, publicAreas.map((r) => [r] as Poly))
+    : blockMp;
   let rows: { ring: Ring; front: Pt[] }[] = [];
   let solutions: (RowSolution | null)[] = [];
   // Adayı ikiye bölen hattın kırık köşe noktaları (varsa)
@@ -3146,7 +3148,7 @@ export function optimizeBlock(
 
   let union: MultiPoly = [];
   for (const pc of parcels) union = mpUnion(union, [[pc.ring]]);
-  const leftover = mpDifference(blockMp, union).filter((poly) => Math.abs(mpArea([poly])) > 0.5);
+  const leftover = mpDifference(netMp, union).filter((poly) => Math.abs(mpArea([poly])) > 0.5);
   const leftoverArea = mpArea(leftover);
 
   const validCount = parcels.filter((x) => x.valid).length;
