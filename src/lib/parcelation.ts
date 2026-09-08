@@ -2367,6 +2367,17 @@ export function optimizeBlock(
   // Bir parsel sırasının teknik olarak mümkün olması için gereken en küçük derinlik.
   const minRowDepth = p.frontSetback + p.minBuildingDepth + p.rearSetback;
 
+  // ARAMA BÜTÇESİ: çok uzun/eğrisel adalarda (ör. 250 m+ cephe) tüm aday orta hat
+  // kombinasyonlarını denemek saatler sürebiliyordu ve sonuç hiç üretilmiyordu.
+  // Bütçe dolduğunda arama durur, o ana kadar bulunan EN İYİ çözüm kullanılır;
+  // böylece her adada parsel üretilir. Aday sırası "en umutlu önce" olacak şekilde
+  // düzenlendiği için bütçe kısıtı sonuç kalitesini düşürmez.
+  const searchStart = Date.now();
+  const searchBudgetMs = 20000;
+  const outOfTime = () => Date.now() - searchStart > searchBudgetMs;
+
+
+
 
   if (frontages.length >= 2) {
     // 1) Sıra derinliği (orta hat konumu) hızlı taranır.
@@ -2431,14 +2442,16 @@ export function optimizeBlock(
       !a ? b : !b ? a : b.valid > a.valid || (b.valid === a.valid && b.score > a.score) ? b : a;
 
     const straight: { ws: number[]; c: Cand }[] = [];
-    // Orta hat önce tam ortadan (0.5) denenir, gerekirse simetrik olarak uzaklaşılır.
-    for (let w = 0.5; w >= 0.2999; w -= 0.02) {
-      const c = evaluate([w, w], false);
-      if (c) straight.push({ ws: [w, w], c });
+    // Orta hat önce tam ortadan (0.5) denenir, sonra simetrik olarak uzaklaşılır.
+    // Sıra "en umutlu önce" olduğundan bütçe dolsa bile iyi bir aday elde edilir.
+    const wCandidates: number[] = [0.5];
+    for (let d = 0.02; d <= 0.2001; d += 0.02) {
+      wCandidates.push(+(0.5 - d).toFixed(2), +(0.5 + d).toFixed(2));
     }
-    for (let w = 0.52; w <= 0.7001; w += 0.02) {
+    for (const w of wCandidates) {
       const c = evaluate([w, w], false);
       if (c) straight.push({ ws: [w, w], c });
+      if (straight.length && outOfTime()) break;
     }
     straight.sort((x, y) => y.c.valid - x.c.valid || y.c.score - x.c.score);
 
@@ -2446,12 +2459,14 @@ export function optimizeBlock(
     //    bölüm hattı denenir; kırık noktaları küçük adımlarla kaydırılır.
     const kinked: { ws: number[]; c: Cand }[] = [];
     for (const s of straight.slice(0, 3)) {
+      if (outOfTime()) break;
       for (const segs of [2, 3]) {
+        if (outOfTime()) break;
         let ws = new Array(segs + 1).fill(s.ws[0]) as number[];
         let cur = evaluate(ws, false);
         if (!cur) continue;
-        for (let pass = 0; pass < 2; pass++) {
-          for (let i = 0; i <= segs; i++) {
+        for (let pass = 0; pass < 2 && !outOfTime(); pass++) {
+          for (let i = 0; i <= segs && !outOfTime(); i++) {
             for (const d of [0.06, -0.06, 0.03, -0.03]) {
               const cand = ws.slice();
               cand[i] = Math.min(0.68, Math.max(0.32, cand[i] + d));
@@ -2462,6 +2477,7 @@ export function optimizeBlock(
                 cur = c;
                 ws = cand;
               }
+              if (outOfTime()) break;
             }
           }
         }
@@ -2476,10 +2492,11 @@ export function optimizeBlock(
     //    Alternatif çözümler için aynı geçerli parsel sayısına sahip adaylar arasında gezinilir.
     const finals: Cand[] = [];
     for (const s of pool.slice(0, 4)) {
-      const tuned = evaluate(s.ws, true);
+      const tuned = outOfTime() ? null : evaluate(s.ws, true);
       const b = better(s.c, tuned);
       if (b) finals.push(b);
     }
+
     // 3b) Oval/elips adalar: uzun yol cephesine paralel ofset bölme (ada genişliğinin yarısı).
     //     Önce tam yarı (0.5) denenir, gerekirse küçük sapmalarla iyileştirilir.
     // Eğrisel (oval/elips) cephelerde paralel ofset bölme denenir; düz cephelerde
@@ -2497,10 +2514,12 @@ export function optimizeBlock(
     const ks = curvature > 1.5 ? [0.5, 0.46, 0.54, 0.42, 0.58] : [];
     if (ks.length) log.push(`Ada cephesi eğrisel (sapma ${curvature.toFixed(1)} m): uzun cepheye paralel ofset bölme adayları da denendi.`);
     for (const k of ks) {
+      if (k !== 0.5 && outOfTime()) break;
       const c = evaluateParallel(k, true);
       if (c) finals.push(c);
       if (k === 0.5 && c && c.sols.every((s) => s && s.validCount > 0 && s.parcels.length === s.validCount)) break;
     }
+
     // Tüm parsellerin koşulları sağlaması önceliklidir: geçersiz parsel sayısı az olan öne alınır.
     const invalidOf = (c: Cand) => c.sols.reduce((a, s) => a + ((s?.parcels.length ?? 0) - (s?.validCount ?? 0)), 0);
     // Eşit koşullarda (geçersiz ve geçerli parsel sayısı aynı) uzun cepheye paralel ofset bölme tercih edilir.
@@ -2521,7 +2540,10 @@ export function optimizeBlock(
     // 4) Bölünmemiş (tek sıra) alternatif: ada ikiye bölünemiyorsa ya da bölmek
     //    daha az geçerli parsel üretiyorsa ada bütün olarak parsellenir.
     let single: Cand | null = null;
-    for (const f of frontages) {
+    // Bütçe dolduysa ve bölünmüş çözüm zaten geçerli parsel üretiyorsa tek sıra
+    // alternatifi aranmaz (bu arama uzun adalarda çok maliyetlidir).
+    const skipSingle = Boolean(best && best.valid > 0 && outOfTime());
+    for (const f of skipSingle ? [] : frontages) {
       const res = solveRow(ring, f, buildingLines, frontages, roadLines, p, 0, true);
       const c: Cand = {
         rows: [{ ring, front: f }],
@@ -2532,8 +2554,10 @@ export function optimizeBlock(
         log: res.log,
       };
       single = better(single, c);
+      if (single && single.valid > 0 && outOfTime()) break;
     }
     const useSingle = !best || (single && single.valid > best.valid);
+
 
     if (useSingle && single) {
       rows = single.rows;
