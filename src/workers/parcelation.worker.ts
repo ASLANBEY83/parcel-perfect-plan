@@ -11,6 +11,7 @@ export type WorkerRequest = {
   buildingLines: Pt[][];
   params: Params;
   variant: number;
+  publicRings?: Ring[];
 };
 
 export type WorkerResponse =
@@ -22,7 +23,7 @@ export type WorkerResponse =
 self.onmessage = (ev: MessageEvent<WorkerRequest>) => {
   const msg = ev.data;
   if (!msg || msg.type !== "compute") return;
-  const { jobId, rings, buildingLines, params, variant } = msg;
+  const { jobId, rings, buildingLines, params, variant, publicRings } = msg;
   const results: BlockResult[] = [];
   try {
     rings.forEach((ring, i) => {
@@ -30,6 +31,7 @@ self.onmessage = (ev: MessageEvent<WorkerRequest>) => {
         id: `ada-${i + 1}`,
         name: `ADA ${i + 1}`,
         variant,
+        publicRings: publicRings ?? [],
       });
       results.push(result);
       let debug: BlockDebug | undefined;

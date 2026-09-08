@@ -160,6 +160,8 @@
   --color-envelope: var(--envelope);
   --color-envelope-line: var(--envelope-line);
   --color-splitline: var(--splitline);
+  --color-kamu: color-mix(in oklab, var(--kamu) 22%, transparent);
+  --color-kamu-line: var(--kamu);
   --color-leftover: var(--leftover);
   --color-label: var(--label);
   --color-measure: var(--measure);
@@ -204,6 +206,7 @@
   --envelope: oklch(0.78 0.13 195 / 0.12);
   --envelope-line: oklch(0.78 0.14 195 / 0.6);
   --splitline: oklch(0.86 0.19 90);
+  --kamu: oklch(0.72 0.15 320);
   --leftover: oklch(0.6 0.05 240 / 0.35);
   --label: oklch(0.9 0.01 230);
   --measure: oklch(0.86 0.19 90);

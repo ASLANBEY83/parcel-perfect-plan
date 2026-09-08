@@ -4,6 +4,7 @@ import {
   bbox,
   centroid,
   clipHalfPlane,
+  closeRing,
   dist,
   dot,
   ensureCCW,
@@ -47,6 +48,8 @@ export interface Params {
   frontSetback: number;
   sideSetback: number;
   rearSetback: number;
+  /** Ada içindeki kamu alanı sınırına uygulanacak yapı yaklaşma mesafesi (m). */
+  publicSetback: number;
   minBuildingArea: number;
   minBuildingFront: number;
   minBuildingDepth: number;
@@ -62,12 +65,35 @@ export const defaultParams: Params = {
   frontSetback: 5,
   sideSetback: 3,
   rearSetback: 3,
+  publicSetback: 3,
   minBuildingArea: 60,
   minBuildingFront: 6,
   minBuildingDepth: 10,
   taks: 0.35,
   tolerance: 1.0,
 };
+
+/**
+ * Geçerli hesaplamanın kamu alanı bağlamı. Kamu alanı sınırına komşu parsel
+ * kenarlarında ön/yan/arka çekme yerine `publicSetback` uygulanır.
+ * (Hesaplama tek iş parçacığında / worker içinde çalışır.)
+ */
+let activePublic: { rings: Ring[]; setback: number } = { rings: [], setback: 3 };
+
+/** Kenar orta noktası bir kamu alanı sınırı üzerinde mi? */
+function edgeOnPublicBoundary(a: Pt, b: Pt): boolean {
+  if (!activePublic.rings.length) return false;
+  const mid: Pt = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  const q1: Pt = [a[0] + (b[0] - a[0]) * 0.25, a[1] + (b[1] - a[1]) * 0.25];
+  const q3: Pt = [a[0] + (b[0] - a[0]) * 0.75, a[1] + (b[1] - a[1]) * 0.75];
+  for (const r of activePublic.rings) {
+    const line = closeRing(r);
+    const near = (q: Pt) => nearestOnPolyline(q, line).d <= 0.5;
+    if (near(mid) && (near(q1) || near(q3))) return true;
+  }
+  return false;
+}
+
 
 export interface Parcel {
   no: number;
@@ -92,6 +118,8 @@ export interface BlockResult {
   name: string;
   ring: Ring;
   frontages: Pt[][];
+  /** Ada içindeki kamu alanı poligonları (parselasyon dışı bırakılır). */
+  publicAreas: Ring[];
   /** Adayı ikiye bölen orta hat (sırt sırta sıralar arasındaki ifraz hattı) */
   splitLine: Pt[];
   parcels: Parcel[];
@@ -315,6 +343,8 @@ export function buildEnvelope(
     const a = r[i];
     const b = r[(i + 1) % r.length];
     const kind = classifyEdge(a, b, frontLines, roadFrontages);
+    // Kamu alanı sınırına komşu kenarda (yol cephesi değilse) kamu çekmesi geçerlidir.
+    if (kind !== "front" && edgeOnPublicBoundary(a, b)) return activePublic.setback;
     return kind === "front" ? p.frontSetback : kind === "rear" ? p.rearSetback : p.sideSetback;
   });
 }
@@ -2221,17 +2251,38 @@ export function optimizeBlock(
   ring0: Ring,
   buildingLines: Pt[][],
   p: Params,
-  opts: { name: string; id: string; manualFrontages?: Pt[][]; variant?: number },
+  opts: { name: string; id: string; manualFrontages?: Pt[][]; variant?: number; publicRings?: Ring[] },
 ): BlockResult {
-  const ring = ensureCCW(simplifyRing(ring0));
+  const rawRing = ensureCCW(simplifyRing(ring0));
   const log: string[] = [];
+
+  // KAMU ALANI: ada içinde kalan kamu poligonları parselasyon dışı bırakılır ve
+  // bu sınıra komşu kenarlarda publicSetback (varsayılan 3 m) uygulanır.
+  const publicSetback = Number.isFinite(p.publicSetback) ? p.publicSetback : 3;
+  const publicAreas = (opts.publicRings ?? [])
+    .map((r) => ensureCCW(simplifyRing(r)))
+    .filter((r) => r.length >= 3 && ringArea(r) > 1)
+    .filter((r) => mpArea(mpIntersect([[rawRing]], [[r]])) > 1);
+  activePublic = { rings: publicAreas, setback: publicSetback };
+
+  // Ada geometrisi ve yol cephesi tespiti KORUNUR (kamu sınırı yol sanılmasın);
+  // kamu alanı, parseller üretildikten sonra parselasyondan çıkarılır.
+  const ring = rawRing;
+  if (publicAreas.length) {
+    log.push(
+      `${publicAreas.length} kamu alanı ada dışında bırakıldı (${mpArea(publicAreas.map((r) => [r] as Poly)).toFixed(1)} m²); kamu sınırında ${publicSetback.toFixed(2)} m yapı yaklaşma mesafesi uygulanıyor.`,
+    );
+  }
+
   const frontages = opts.manualFrontages?.length ? opts.manualFrontages : detectRoadFrontages(ring);
   log.push(`${frontages.length} yol cephesi belirlendi.`);
 
   // Ada sınırlarının tamamı yola cephelidir: her ada kenarından frontSetback kadar ön çekme uygulanır.
   const roadLines: Pt[][] = roadChains(ring);
 
-  const blockMp: MultiPoly = [[ring]];
+  const blockMp: MultiPoly = publicAreas.length
+    ? mpDifference([[ring]], publicAreas.map((r) => [r] as Poly))
+    : [[ring]];
   let rows: { ring: Ring; front: Pt[] }[] = [];
   let solutions: (RowSolution | null)[] = [];
   // Adayı ikiye bölen hattın kırık köşe noktaları (varsa)
@@ -2516,6 +2567,7 @@ export function optimizeBlock(
       name: opts.name,
       ring,
       frontages: [],
+      publicAreas,
       splitLine: [],
       parcels: [],
       leftover: blockMp,
@@ -3054,6 +3106,42 @@ export function optimizeBlock(
     }
   }
 
+  // KAMU ALANI KESİŞİMİ: kamu poligonu ada içinde ada (interior) olarak kalmışsa
+  // üzerine gelen parseller kırpılır, geçerliliğini kaybedenler üretilmez.
+  if (publicAreas.length) {
+    const pubMp: MultiPoly = publicAreas.map((r) => [r] as Poly);
+    const kept: Parcel[] = [];
+    for (const q of parcels) {
+      const overlap = mpArea(mpIntersect([[q.ring]], pubMp));
+      if (overlap <= 1) {
+        kept.push(q);
+        continue;
+      }
+      const rest = largestPoly(mpDifference([[q.ring]], pubMp));
+      if (!rest || !rest[0] || rest[0].length < 3) continue;
+      const front = rows[q.row]?.front ?? frontages[0];
+      try {
+        const cand = evaluateParcel(
+          simplifyRing(rest[0]),
+          front,
+          buildingLines,
+          frontages,
+          roadLines,
+          p,
+          q.corner,
+          q.row,
+        );
+        if (cand && cand.valid) kept.push(cand);
+      } catch {
+        /* kırpılamayan parsel üretilmez */
+      }
+    }
+    if (kept.length !== parcels.length)
+      log.push(`Kamu alanı ile çakışan ${parcels.length - kept.length} parsel üretilmedi veya kırpıldı.`);
+    parcels.length = 0;
+    parcels.push(...kept);
+  }
+
   parcels.forEach((x, i) => (x.no = i + 1));
 
   let union: MultiPoly = [];
@@ -3067,11 +3155,14 @@ export function optimizeBlock(
   );
   if (leftoverArea > 1) log.push(`Çözülemeyen artık alan: ${leftoverArea.toFixed(1)} m².`);
 
+  activePublic = { rings: [], setback: publicSetback };
+
   return {
     id: opts.id,
     name: opts.name,
     ring,
     frontages,
+    publicAreas,
     splitLine: splitFull.length >= 2 ? splitFull : splitMid,
     parcels,
     leftover,
