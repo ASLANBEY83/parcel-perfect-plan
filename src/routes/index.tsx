@@ -68,7 +68,7 @@ export const Route = createFileRoute("/")({
   component: Index,
 });
 
-const LAYER_KEYS: (keyof LayerVisibility)[] = ["ADA", "PARSELLER", "YAPI_INSAA_HATTI", "YAPI_YAKLASMA", "YAPI_BLOKLARI", "ADA_ORTA_HAT"];
+const LAYER_KEYS: (keyof LayerVisibility)[] = ["ADA", "PARSELLER", "YAPI_INSAA_HATTI", "YAPI_YAKLASMA", "YAPI_BLOKLARI", "ADA_ORTA_HAT", "KAMU_ALANI"];
 const LAYER_LABELS: Record<keyof LayerVisibility, string> = {
   ADA: "Ada sınırı",
   PARSELLER: "Parseller",
@@ -76,6 +76,7 @@ const LAYER_LABELS: Record<keyof LayerVisibility, string> = {
   YAPI_YAKLASMA: "Yapı yaklaşma sınırı",
   YAPI_BLOKLARI: "Yapı blokları",
   ADA_ORTA_HAT: "Ada orta hattı",
+  KAMU_ALANI: "Kamu alanı",
 };
 
 /** Üretilen her parselasyon çözümü ayrı bir "alternatif katman" olarak saklanır. */
@@ -91,6 +92,7 @@ function Index() {
   const [fileName, setFileName] = useState<string>("");
   const [adaLayer, setAdaLayer] = useState("ADA");
   const [hatLayer, setHatLayer] = useState("YAPI_INSAA_HATTI");
+  const [kamuLayer, setKamuLayer] = useState("");
   const [params, setParams] = useState<Params>(defaultParams);
   const [results, setResults] = useState<BlockResult[]>([]);
   const [selected, setSelected] = useState<{ block: BlockResult; parcel: Parcel } | null>(null);
@@ -136,12 +138,17 @@ function Index() {
     YAPI_YAKLASMA: true,
     YAPI_BLOKLARI: true,
     ADA_ORTA_HAT: true,
+    KAMU_ALANI: true,
   });
   const fileRef = useRef<HTMLInputElement>(null);
 
 
   const adaRings: Ring[] = useMemo(() => (doc ? polygonsOfLayer(doc, adaLayer) : []), [doc, adaLayer]);
   const buildingLines: Pt[][] = useMemo(() => (doc ? linesOfLayer(doc, hatLayer) : []), [doc, hatLayer]);
+  const kamuRings: Ring[] = useMemo(
+    () => (doc && kamuLayer ? polygonsOfLayer(doc, kamuLayer) : []),
+    [doc, kamuLayer],
+  );
   const exactBuildingLines: Pt[][] = useMemo(
     () =>
       adaRings
@@ -193,8 +200,10 @@ function Index() {
           .replace(/[öÖ]/g, "o");
       const guessHat =
         d.layers.find((l) => /insa|cekme|yaklasma|yapi_?ins|imar_?hat/.test(nrm(l))) ?? "YAPI_INSAA_HATTI";
+      const guessKamu = d.layers.find((l) => /kamu|park|okul|resmi|donati|yesil/.test(nrm(l))) ?? "";
       setAdaLayer(guessAda);
       setHatLayer(guessHat);
+      setKamuLayer(guessKamu);
       georeference(polygonsOfLayer(d, guessAda));
       setNotice(`${name} okundu. ${d.layers.length} katman bulundu.`);
     } catch (err) {
@@ -257,7 +266,12 @@ function Index() {
     setTimeout(() => {
       try {
         const out = rings.map((r, i) =>
-          optimizeBlock(r, exactBuildingLines, params, { id: `ada-${i + 1}`, name: `ADA ${i + 1}`, variant }),
+          optimizeBlock(r, exactBuildingLines, params, {
+            id: `ada-${i + 1}`,
+            name: `ADA ${i + 1}`,
+            variant,
+            publicRings: kamuRings,
+          }),
         );
         registerAlt(out, variant, rings.length > 1 ? "all" : "one");
         setNotice(variant > 0 ? `Alternatif parselasyon #${variant} üretildi.` : null);
@@ -336,6 +350,7 @@ function Index() {
       buildingLines: exactBuildingLines,
       params,
       variant,
+      publicRings: kamuRings,
     } satisfies WorkerRequest);
   }
 
@@ -464,6 +479,19 @@ function Index() {
                   ))}
                 </Sel>
               </Field>
+              <Field label="Kamu alanı katmanı">
+                <Sel value={kamuLayer} onChange={setKamuLayer}>
+                  <option value="">(yok)</option>
+                  {(doc?.layers ?? []).map((l) => (
+                    <option key={l} value={l}>
+                      {l}
+                    </option>
+                  ))}
+                </Sel>
+              </Field>
+              <p className="font-mono text-[10px] leading-relaxed text-muted-foreground">
+                {kamuRings.length} kamu alanı poligonu
+              </p>
               <p className="font-mono text-[10px] leading-relaxed text-muted-foreground">
                 {adaRings.length} ada · DXF hat katmanında {buildingLines.length} nesne · hesaplanan{" "}
                 {exactBuildingLines.length} adet tam {params.frontSetback.toFixed(2)} m paralel yapı hattı
@@ -507,6 +535,12 @@ function Index() {
                   <Num tone="green" label="Ön çekme (m)" v={params.frontSetback} set={(v) => setParams({ ...params, frontSetback: v })} />
                   <Num tone="green" label="Yan çekme (m)" v={params.sideSetback} set={(v) => setParams({ ...params, sideSetback: v })} />
                   <Num tone="green" label="Arka çekme (m)" v={params.rearSetback} set={(v) => setParams({ ...params, rearSetback: v })} />
+                  <Num
+                    tone="green"
+                    label="Kamu alanı çekme (m)"
+                    v={params.publicSetback}
+                    set={(v) => setParams({ ...params, publicSetback: v })}
+                  />
                   <Num
                     tone="green"
                     label="Min yapı (m²)"

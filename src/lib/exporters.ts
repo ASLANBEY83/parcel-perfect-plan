@@ -19,6 +19,7 @@ export function exportDXF(blocks: BlockResult[], buildingLines: Pt[][]) {
   const ents: { layer: string; points: Pt[]; closed: boolean }[] = [];
   for (const b of blocks) {
     ents.push({ layer: "ADA", points: b.ring, closed: true });
+    for (const k of b.publicAreas ?? []) ents.push({ layer: "KAMU_ALANI", points: k, closed: true });
     if (b.splitLine && b.splitLine.length >= 2)
       ents.push({ layer: "ADA_ORTA_HAT", points: b.splitLine, closed: false });
     for (const p of b.parcels) {
@@ -48,6 +49,12 @@ export function exportGeoJSON(blocks: BlockResult[], buildingLines: Pt[][]) {
       properties: { layer: "ADA", ada: b.name, alan: Number(b.ring.length) },
       geometry: { type: "Polygon", coordinates: ringToGeoJson(b.ring) },
     });
+    for (const k of b.publicAreas ?? [])
+      features.push({
+        type: "Feature",
+        properties: { layer: "KAMU_ALANI", ada: b.name },
+        geometry: { type: "Polygon", coordinates: ringToGeoJson(k) },
+      });
     for (const p of b.parcels) {
       features.push({
         type: "Feature",
@@ -133,7 +140,7 @@ export function exportPackage(blocks: BlockResult[], buildingLines: Pt[][]) {
       format: "parselasyon-paket/1.0",
       crs: "yerel-projekte-metre",
       hedef: "PostGIS / GeoPackage aktarımı",
-      katmanlar: ["ADA", "PARSELLER", "YAPI_INSAA_HATTI", "YAPI_YAKLASMA", "YAPI_BLOKLARI", "ADA_ORTA_HAT"],
+      katmanlar: ["ADA", "PARSELLER", "YAPI_INSAA_HATTI", "YAPI_YAKLASMA", "YAPI_BLOKLARI", "ADA_ORTA_HAT", "KAMU_ALANI"],
       veri: JSON.parse(exportGeoJSON(blocks, buildingLines)),
     },
     null,

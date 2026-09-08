@@ -50,3 +50,5 @@
 
 - [x] Ada ayrım hattı kırıkları da tolerans içinde birleşme hedefi: parsel köşesi ayrım hattı kırığına tolerans kadar yakınsa köşe tam o noktaya taşınıyor (`snapTargets` = ada sınırı + uzatılmış ayrım hattı köşeleri).
 - [x] Küme birleşiminden sonra alan farkı, parselin YOL CEPHESİNDEKİ ortak köşesi hat boyunca kaydırılarak dengeleniyor (`rebalanceRoadCorner`, diklik şartı göz ardı). Doğrulama: tsgo 0, regresyon 7/7, 353ADA 18/18 geçerli.
+
+- [x] Ada içindeki kamu alanı: DXF'ten "Kamu alanı katmanı" seçilir; kamu poligonu parselasyon dışı bırakılır (üzerine gelen parseller kırpılır/üretilmez), haritada ayrı katman olarak gösterilir, DXF/GeoJSON'a `KAMU_ALANI` olarak aktarılır ve kamu sınırında `publicSetback` (varsayılan 3 m) yapı yaklaşma mesafesi uygulanır. Doğrulama: tsgo 0, regresyon 7/7, 353ADA + kamu 13/13 geçerli, kamu ile çakışma 0.
