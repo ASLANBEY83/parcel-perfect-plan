@@ -4,7 +4,6 @@ import {
   bbox,
   centroid,
   clipHalfPlane,
-  closeRing,
   dist,
   dot,
   ensureCCW,
@@ -48,8 +47,6 @@ export interface Params {
   frontSetback: number;
   sideSetback: number;
   rearSetback: number;
-  /** Ada içindeki kamu alanı sınırına uygulanacak yapı yaklaşma mesafesi (m). */
-  publicSetback: number;
   minBuildingArea: number;
   minBuildingFront: number;
   minBuildingDepth: number;
@@ -65,35 +62,12 @@ export const defaultParams: Params = {
   frontSetback: 5,
   sideSetback: 3,
   rearSetback: 3,
-  publicSetback: 3,
   minBuildingArea: 60,
   minBuildingFront: 6,
   minBuildingDepth: 10,
   taks: 0.35,
   tolerance: 1.0,
 };
-
-/**
- * Geçerli hesaplamanın kamu alanı bağlamı. Kamu alanı sınırına komşu parsel
- * kenarlarında ön/yan/arka çekme yerine `publicSetback` uygulanır.
- * (Hesaplama tek iş parçacığında / worker içinde çalışır.)
- */
-let activePublic: { rings: Ring[]; setback: number } = { rings: [], setback: 3 };
-
-/** Kenar orta noktası bir kamu alanı sınırı üzerinde mi? */
-function edgeOnPublicBoundary(a: Pt, b: Pt): boolean {
-  if (!activePublic.rings.length) return false;
-  const mid: Pt = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
-  const q1: Pt = [a[0] + (b[0] - a[0]) * 0.25, a[1] + (b[1] - a[1]) * 0.25];
-  const q3: Pt = [a[0] + (b[0] - a[0]) * 0.75, a[1] + (b[1] - a[1]) * 0.75];
-  for (const r of activePublic.rings) {
-    const line = closeRing(r);
-    const near = (q: Pt) => nearestOnPolyline(q, line).d <= 0.5;
-    if (near(mid) && (near(q1) || near(q3))) return true;
-  }
-  return false;
-}
-
 
 export interface Parcel {
   no: number;
@@ -118,8 +92,6 @@ export interface BlockResult {
   name: string;
   ring: Ring;
   frontages: Pt[][];
-  /** Ada içindeki kamu alanı poligonları (parselasyon dışı bırakılır). */
-  publicAreas: Ring[];
   /** Adayı ikiye bölen orta hat (sırt sırta sıralar arasındaki ifraz hattı) */
   splitLine: Pt[];
   parcels: Parcel[];
@@ -343,8 +315,6 @@ export function buildEnvelope(
     const a = r[i];
     const b = r[(i + 1) % r.length];
     const kind = classifyEdge(a, b, frontLines, roadFrontages);
-    // Kamu alanı sınırına komşu kenarda (yol cephesi değilse) kamu çekmesi geçerlidir.
-    if (kind !== "front" && edgeOnPublicBoundary(a, b)) return activePublic.setback;
     return kind === "front" ? p.frontSetback : kind === "rear" ? p.rearSetback : p.sideSetback;
   });
 }
@@ -2251,29 +2221,10 @@ export function optimizeBlock(
   ring0: Ring,
   buildingLines: Pt[][],
   p: Params,
-  opts: { name: string; id: string; manualFrontages?: Pt[][]; variant?: number; publicRings?: Ring[] },
+  opts: { name: string; id: string; manualFrontages?: Pt[][]; variant?: number },
 ): BlockResult {
-  const rawRing = ensureCCW(simplifyRing(ring0));
+  const ring = ensureCCW(simplifyRing(ring0));
   const log: string[] = [];
-
-  // KAMU ALANI: ada içinde kalan kamu poligonları parselasyon dışı bırakılır ve
-  // bu sınıra komşu kenarlarda publicSetback (varsayılan 3 m) uygulanır.
-  const publicSetback = Number.isFinite(p.publicSetback) ? p.publicSetback : 3;
-  const publicAreas = (opts.publicRings ?? [])
-    .map((r) => ensureCCW(simplifyRing(r)))
-    .filter((r) => r.length >= 3 && ringArea(r) > 1)
-    .filter((r) => mpArea(mpIntersect([[rawRing]], [[r]])) > 1);
-  activePublic = { rings: publicAreas, setback: publicSetback };
-
-  // Ada geometrisi ve yol cephesi tespiti KORUNUR (kamu sınırı yol sanılmasın);
-  // kamu alanı, parseller üretildikten sonra parselasyondan çıkarılır.
-  const ring = rawRing;
-  if (publicAreas.length) {
-    log.push(
-      `${publicAreas.length} kamu alanı ada dışında bırakıldı (${mpArea(publicAreas.map((r) => [r] as Poly)).toFixed(1)} m²); kamu sınırında ${publicSetback.toFixed(2)} m yapı yaklaşma mesafesi uygulanıyor.`,
-    );
-  }
-
   const frontages = opts.manualFrontages?.length ? opts.manualFrontages : detectRoadFrontages(ring);
   log.push(`${frontages.length} yol cephesi belirlendi.`);
 
@@ -2281,10 +2232,6 @@ export function optimizeBlock(
   const roadLines: Pt[][] = roadChains(ring);
 
   const blockMp: MultiPoly = [[ring]];
-  // Artık alan hesabında kamu alanı ada dışıdır.
-  const netMp: MultiPoly = publicAreas.length
-    ? mpDifference(blockMp, publicAreas.map((r) => [r] as Poly))
-    : blockMp;
   let rows: { ring: Ring; front: Pt[] }[] = [];
   let solutions: (RowSolution | null)[] = [];
   // Adayı ikiye bölen hattın kırık köşe noktaları (varsa)
@@ -2367,17 +2314,6 @@ export function optimizeBlock(
   // Bir parsel sırasının teknik olarak mümkün olması için gereken en küçük derinlik.
   const minRowDepth = p.frontSetback + p.minBuildingDepth + p.rearSetback;
 
-  // ARAMA BÜTÇESİ: çok uzun/eğrisel adalarda (ör. 250 m+ cephe) tüm aday orta hat
-  // kombinasyonlarını denemek saatler sürebiliyordu ve sonuç hiç üretilmiyordu.
-  // Bütçe dolduğunda arama durur, o ana kadar bulunan EN İYİ çözüm kullanılır;
-  // böylece her adada parsel üretilir. Aday sırası "en umutlu önce" olacak şekilde
-  // düzenlendiği için bütçe kısıtı sonuç kalitesini düşürmez.
-  const searchStart = Date.now();
-  const searchBudgetMs = 20000;
-  const outOfTime = () => Date.now() - searchStart > searchBudgetMs;
-
-
-
 
   if (frontages.length >= 2) {
     // 1) Sıra derinliği (orta hat konumu) hızlı taranır.
@@ -2442,16 +2378,14 @@ export function optimizeBlock(
       !a ? b : !b ? a : b.valid > a.valid || (b.valid === a.valid && b.score > a.score) ? b : a;
 
     const straight: { ws: number[]; c: Cand }[] = [];
-    // Orta hat önce tam ortadan (0.5) denenir, sonra simetrik olarak uzaklaşılır.
-    // Sıra "en umutlu önce" olduğundan bütçe dolsa bile iyi bir aday elde edilir.
-    const wCandidates: number[] = [0.5];
-    for (let d = 0.02; d <= 0.2001; d += 0.02) {
-      wCandidates.push(+(0.5 - d).toFixed(2), +(0.5 + d).toFixed(2));
-    }
-    for (const w of wCandidates) {
+    // Orta hat önce tam ortadan (0.5) denenir, gerekirse simetrik olarak uzaklaşılır.
+    for (let w = 0.5; w >= 0.2999; w -= 0.02) {
       const c = evaluate([w, w], false);
       if (c) straight.push({ ws: [w, w], c });
-      if (straight.length && outOfTime()) break;
+    }
+    for (let w = 0.52; w <= 0.7001; w += 0.02) {
+      const c = evaluate([w, w], false);
+      if (c) straight.push({ ws: [w, w], c });
     }
     straight.sort((x, y) => y.c.valid - x.c.valid || y.c.score - x.c.score);
 
@@ -2459,14 +2393,12 @@ export function optimizeBlock(
     //    bölüm hattı denenir; kırık noktaları küçük adımlarla kaydırılır.
     const kinked: { ws: number[]; c: Cand }[] = [];
     for (const s of straight.slice(0, 3)) {
-      if (outOfTime()) break;
       for (const segs of [2, 3]) {
-        if (outOfTime()) break;
         let ws = new Array(segs + 1).fill(s.ws[0]) as number[];
         let cur = evaluate(ws, false);
         if (!cur) continue;
-        for (let pass = 0; pass < 2 && !outOfTime(); pass++) {
-          for (let i = 0; i <= segs && !outOfTime(); i++) {
+        for (let pass = 0; pass < 2; pass++) {
+          for (let i = 0; i <= segs; i++) {
             for (const d of [0.06, -0.06, 0.03, -0.03]) {
               const cand = ws.slice();
               cand[i] = Math.min(0.68, Math.max(0.32, cand[i] + d));
@@ -2477,7 +2409,6 @@ export function optimizeBlock(
                 cur = c;
                 ws = cand;
               }
-              if (outOfTime()) break;
             }
           }
         }
@@ -2492,11 +2423,10 @@ export function optimizeBlock(
     //    Alternatif çözümler için aynı geçerli parsel sayısına sahip adaylar arasında gezinilir.
     const finals: Cand[] = [];
     for (const s of pool.slice(0, 4)) {
-      const tuned = outOfTime() ? null : evaluate(s.ws, true);
+      const tuned = evaluate(s.ws, true);
       const b = better(s.c, tuned);
       if (b) finals.push(b);
     }
-
     // 3b) Oval/elips adalar: uzun yol cephesine paralel ofset bölme (ada genişliğinin yarısı).
     //     Önce tam yarı (0.5) denenir, gerekirse küçük sapmalarla iyileştirilir.
     // Eğrisel (oval/elips) cephelerde paralel ofset bölme denenir; düz cephelerde
@@ -2514,12 +2444,10 @@ export function optimizeBlock(
     const ks = curvature > 1.5 ? [0.5, 0.46, 0.54, 0.42, 0.58] : [];
     if (ks.length) log.push(`Ada cephesi eğrisel (sapma ${curvature.toFixed(1)} m): uzun cepheye paralel ofset bölme adayları da denendi.`);
     for (const k of ks) {
-      if (k !== 0.5 && outOfTime()) break;
       const c = evaluateParallel(k, true);
       if (c) finals.push(c);
       if (k === 0.5 && c && c.sols.every((s) => s && s.validCount > 0 && s.parcels.length === s.validCount)) break;
     }
-
     // Tüm parsellerin koşulları sağlaması önceliklidir: geçersiz parsel sayısı az olan öne alınır.
     const invalidOf = (c: Cand) => c.sols.reduce((a, s) => a + ((s?.parcels.length ?? 0) - (s?.validCount ?? 0)), 0);
     // Eşit koşullarda (geçersiz ve geçerli parsel sayısı aynı) uzun cepheye paralel ofset bölme tercih edilir.
@@ -2540,10 +2468,7 @@ export function optimizeBlock(
     // 4) Bölünmemiş (tek sıra) alternatif: ada ikiye bölünemiyorsa ya da bölmek
     //    daha az geçerli parsel üretiyorsa ada bütün olarak parsellenir.
     let single: Cand | null = null;
-    // Bütçe dolduysa ve bölünmüş çözüm zaten geçerli parsel üretiyorsa tek sıra
-    // alternatifi aranmaz (bu arama uzun adalarda çok maliyetlidir).
-    const skipSingle = Boolean(best && best.valid > 0 && outOfTime());
-    for (const f of skipSingle ? [] : frontages) {
+    for (const f of frontages) {
       const res = solveRow(ring, f, buildingLines, frontages, roadLines, p, 0, true);
       const c: Cand = {
         rows: [{ ring, front: f }],
@@ -2554,10 +2479,8 @@ export function optimizeBlock(
         log: res.log,
       };
       single = better(single, c);
-      if (single && single.valid > 0 && outOfTime()) break;
     }
     const useSingle = !best || (single && single.valid > best.valid);
-
 
     if (useSingle && single) {
       rows = single.rows;
@@ -2593,7 +2516,6 @@ export function optimizeBlock(
       name: opts.name,
       ring,
       frontages: [],
-      publicAreas,
       splitLine: [],
       parcels: [],
       leftover: blockMp,
@@ -3132,47 +3054,11 @@ export function optimizeBlock(
     }
   }
 
-  // KAMU ALANI KESİŞİMİ: kamu poligonu ada içinde ada (interior) olarak kalmışsa
-  // üzerine gelen parseller kırpılır, geçerliliğini kaybedenler üretilmez.
-  if (publicAreas.length) {
-    const pubMp: MultiPoly = publicAreas.map((r) => [r] as Poly);
-    const kept: Parcel[] = [];
-    for (const q of parcels) {
-      const overlap = mpArea(mpIntersect([[q.ring]], pubMp));
-      if (overlap <= 1) {
-        kept.push(q);
-        continue;
-      }
-      const rest = largestPoly(mpDifference([[q.ring]], pubMp));
-      if (!rest || !rest[0] || rest[0].length < 3) continue;
-      const front = rows[q.row]?.front ?? frontages[0];
-      try {
-        const cand = evaluateParcel(
-          simplifyRing(rest[0]),
-          front,
-          buildingLines,
-          frontages,
-          roadLines,
-          p,
-          q.corner,
-          q.row,
-        );
-        if (cand && cand.valid) kept.push(cand);
-      } catch {
-        /* kırpılamayan parsel üretilmez */
-      }
-    }
-    if (kept.length !== parcels.length)
-      log.push(`Kamu alanı ile çakışan ${parcels.length - kept.length} parsel üretilmedi veya kırpıldı.`);
-    parcels.length = 0;
-    parcels.push(...kept);
-  }
-
   parcels.forEach((x, i) => (x.no = i + 1));
 
   let union: MultiPoly = [];
   for (const pc of parcels) union = mpUnion(union, [[pc.ring]]);
-  const leftover = mpDifference(netMp, union).filter((poly) => Math.abs(mpArea([poly])) > 0.5);
+  const leftover = mpDifference(blockMp, union).filter((poly) => Math.abs(mpArea([poly])) > 0.5);
   const leftoverArea = mpArea(leftover);
 
   const validCount = parcels.filter((x) => x.valid).length;
@@ -3181,14 +3067,11 @@ export function optimizeBlock(
   );
   if (leftoverArea > 1) log.push(`Çözülemeyen artık alan: ${leftoverArea.toFixed(1)} m².`);
 
-  activePublic = { rings: [], setback: publicSetback };
-
   return {
     id: opts.id,
     name: opts.name,
     ring,
     frontages,
-    publicAreas,
     splitLine: splitFull.length >= 2 ? splitFull : splitMid,
     parcels,
     leftover,

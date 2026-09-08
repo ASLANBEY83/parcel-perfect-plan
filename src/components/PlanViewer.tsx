@@ -11,7 +11,6 @@ export interface LayerVisibility {
   YAPI_YAKLASMA: boolean;
   YAPI_BLOKLARI: boolean;
   ADA_ORTA_HAT: boolean;
-  KAMU_ALANI: boolean;
 }
 
 export interface BasemapConfig {
@@ -446,19 +445,6 @@ export const PlanViewer = memo(function PlanViewer({
                   strokeWidth={0.8}
                 />
               )),
-          )}
-
-        {layers.KAMU_ALANI &&
-          blocks.flatMap((b) =>
-            (b.publicAreas ?? []).map((k, i) => (
-              <polygon
-                key={`${b.id}-kamu-${i}`}
-                points={poly(k)}
-                className="pointer-events-none fill-kamu stroke-kamu-line"
-                strokeWidth={1.4}
-                strokeDasharray="8 4"
-              />
-            )),
           )}
 
         {layers.ADA_ORTA_HAT &&
