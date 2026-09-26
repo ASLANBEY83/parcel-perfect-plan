@@ -203,7 +203,7 @@
   --buildline: oklch(0.7 0.16 300);
   --envelope: oklch(0.78 0.13 195 / 0.12);
   --envelope-line: oklch(0.78 0.14 195 / 0.6);
-  --splitline: oklch(0.86 0.19 90);
+  --splitline: oklch(0.68 0.24 25);
   --leftover: oklch(0.6 0.05 240 / 0.35);
   --label: oklch(0.9 0.01 230);
   --measure: oklch(0.86 0.19 90);

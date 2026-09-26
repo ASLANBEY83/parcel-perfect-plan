@@ -52,3 +52,5 @@
 - [x] Küme birleşiminden sonra alan farkı, parselin YOL CEPHESİNDEKİ ortak köşesi hat boyunca kaydırılarak dengeleniyor (`rebalanceRoadCorner`, diklik şartı göz ardı). Doğrulama: tsgo 0, regresyon 7/7, 353ADA 18/18 geçerli.
 
 - [x] Parametreler bölümünü yüklenen referanstaki iki sütunlu kompakt kart düzenine uyarlamak.
+
+- [x] Ada orta hattını kırmızı gösterip ada sınırı dışına taşmasını engellemek.
