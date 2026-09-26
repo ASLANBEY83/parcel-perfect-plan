@@ -3099,12 +3099,120 @@ export function optimizeBlock(
     }
   }
 
+  // TOPOLOJİ ZORUNLULUĞU: parseller ada içinde kalır, birbirleriyle çakışmaz,
+  // aralarında boşluk bırakmaz (toplam alan = ada alanı) ve komşu sınırlar
+  // aynı düğümleri paylaşır.
+  const openRing = (r: Pt[]): Ring => {
+    const o = r.slice();
+    while (o.length > 1 && dist(o[0], o[o.length - 1]) < 1e-9) o.pop();
+    return o as Ring;
+  };
+  const reEval = (q: Parcel, r: Ring): Parcel => {
+    const front = rows[q.row]?.front ?? frontages[0];
+    const np = evaluateParcel(r, front, buildingLines, frontages, roadLines, p, q.corner, q.row);
+    return np ? { ...np, no: q.no } : { ...q, ring: r, area: Math.abs(ringArea(r)) };
+  };
+  if (parcels.length) {
+    let changed = 0;
+    // 1) Ada dışı kırpma + 2) örtüşme giderme (öncelik geçerli/erken parselde)
+    const order = parcels.map((_, i) => i).sort((a, b) => Number(parcels[b].valid) - Number(parcels[a].valid));
+    let taken: MultiPoly = [];
+    for (const i of order) {
+      const q = parcels[i];
+      let mp = mpIntersect([[q.ring]], blockMp);
+      if (taken.length) mp = mpDifference(mp, taken);
+      const lp = largestPoly(mp);
+      if (!lp) continue;
+      const r = openRing(lp[0]);
+      if (Math.abs(Math.abs(ringArea(r)) - q.area) > 0.01) {
+        parcels[i] = reEval(q, r);
+        changed++;
+      }
+      taken = mpUnion(taken, [[parcels[i].ring]]);
+    }
+    // 3) Boşluklar: her artık parça ortak sınırı olan komşuya zorunlu eklenir
+    for (let pass = 0; pass < 3; pass++) {
+      let uni: MultiPoly = [];
+      for (const pc of parcels) uni = mpUnion(uni, [[pc.ring]]);
+      const gaps = mpDifference(blockMp, uni).filter((poly) => Math.abs(mpArea([poly])) > 0.01);
+      if (!gaps.length) break;
+      for (const g of gaps) {
+        let best = -1;
+        let bestScore = -Infinity;
+        let bestRing: Ring | null = null;
+        parcels.forEach((q, i) => {
+          const u = mpUnion([[q.ring]], [g]);
+          if (u.length !== 1) return; // temas yok
+          const r = openRing(u[0][0]);
+          const cand = reEval(q, r);
+          const inRange = cand.area <= p.maxArea + p.tolerance ? 1 : 0;
+          const score = Number(cand.valid) * 1e6 + inRange * 1e4 - cand.area / 1000;
+          if (score > bestScore) {
+            bestScore = score;
+            best = i;
+            bestRing = r;
+          }
+        });
+        if (best >= 0 && bestRing) {
+          parcels[best] = reEval(parcels[best], bestRing);
+          changed++;
+        }
+      }
+    }
+    // 4) Düğüm uyumu: yakın köşeler aynı koordinat, T-bağlantılarda karşı kenara düğüm eklenir
+    const EPS = 0.02;
+    const nodes: Pt[] = [];
+    const nodeOf = (pt: Pt): Pt => {
+      for (const n of nodes) if (dist(n, pt) < EPS) return n;
+      nodes.push(pt);
+      return pt;
+    };
+    for (const pt of ring) nodeOf(pt);
+    for (const pt of splitFull) nodeOf(pt);
+    let rings = parcels.map((q) => openRing(q.ring.map((v) => nodeOf(v)) as Ring));
+    rings = rings.map((r) => {
+      const out: Pt[] = [];
+      for (let k = 0; k < r.length; k++) {
+        const a = r[k];
+        const b = r[(k + 1) % r.length];
+        out.push(a);
+        const ab = sub(b, a);
+        const L = Math.hypot(ab[0], ab[1]);
+        if (L < 1e-9) continue;
+        const onEdge: { t: number; pt: Pt }[] = [];
+        for (const n of nodes) {
+          if (n === a || n === b) continue;
+          const t = dot(sub(n, a), ab) / (L * L);
+          if (t <= 1e-6 || t >= 1 - 1e-6) continue;
+          const proj: Pt = [a[0] + ab[0] * t, a[1] + ab[1] * t];
+          if (dist(proj, n) < EPS) onEdge.push({ t, pt: n });
+        }
+        onEdge.sort((x, y) => x.t - y.t).forEach((x) => out.push(x.pt));
+      }
+      return out.filter((v, k) => k === 0 || v !== out[k - 1]) as Ring;
+    });
+    parcels.forEach((q, i) => {
+      q.ring = rings[i];
+      q.area = Math.abs(ringArea(rings[i]));
+    });
+    if (changed) log.push(`Topoloji zorunluluğu: ${changed} parsel sınırı ada/komşu sınırlarına oturtuldu.`);
+  }
+
   parcels.forEach((x, i) => (x.no = i + 1));
 
   let union: MultiPoly = [];
   for (const pc of parcels) union = mpUnion(union, [[pc.ring]]);
-  const leftover = mpDifference(blockMp, union).filter((poly) => Math.abs(mpArea([poly])) > 0.5);
+  const leftover = mpDifference(blockMp, union).filter((poly) => Math.abs(mpArea([poly])) > 0.01);
   const leftoverArea = mpArea(leftover);
+  // Denetim: örtüşme ve kapanış
+  {
+    const sumA = parcels.reduce((a, q) => a + q.area, 0);
+    const adaA = Math.abs(mpArea(blockMp));
+    const overlap = Math.max(0, sumA - Math.abs(mpArea(union)));
+    log.push(
+      `Denetim: ada ${adaA.toFixed(2)} m², parseller toplamı ${sumA.toFixed(2)} m², fark ${(adaA - sumA).toFixed(2)} m², örtüşme ${overlap.toFixed(2)} m².`,
+    );
+  }
 
   // Alan ve tolerans düzeltmeleri ortak sınırdaki düğümleri kaydırmış olabilir.
   // Çıktıdaki orta hattı son parsel geometrisinden yeniden türet; böylece harita
