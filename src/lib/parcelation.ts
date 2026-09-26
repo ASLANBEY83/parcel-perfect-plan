@@ -877,10 +877,11 @@ function evaluateParcel(
       issues.push(m);
     };
     // Parsel alanı HARD CONSTRAINT: kullanıcının girdiği min–max aralığı dışı geçersizdir.
-    if (area < p.minArea)
-      fail(`Parsel alanı minimum değerin altında: ${area.toFixed(1)} m² < ${p.minArea} m²`);
-    if (area > p.maxArea)
-      fail(`Parsel alanı maksimum değerin üzerinde: ${area.toFixed(1)} m² > ${p.maxArea} m²`);
+    // 0.05 m² sayısal tolerans: 399.99/400.01 gibi yuvarlama farkları ihlal sayılmaz.
+    if (area < p.minArea - 0.05)
+      fail(`Parsel alanı minimum değerin altında: ${area.toFixed(2)} m² < ${p.minArea} m²`);
+    if (area > p.maxArea + 0.05)
+      fail(`Parsel alanı maksimum değerin üzerinde: ${area.toFixed(2)} m² > ${p.maxArea} m²`);
     const minF = corner ? p.cornerFront : p.midFront;
     if (frontage < minF - 1e-6)
       fail(`${corner ? "Köşe" : "Ara"} parsel cephesi ${frontage.toFixed(2)} m < ${minF} m`);
@@ -909,9 +910,9 @@ function evaluateParcel(
         );
       else fail("Kurallara uygun yapı bloğu oluşturulamadı");
     } else {
-      if (bld.area < p.minBuildingArea)
+      if (bld.area < p.minBuildingArea - 1e-3)
         fail(`Yapı alanı ${bld.area.toFixed(1)} m² < ${p.minBuildingArea} m²`);
-      if (bld.front < p.minBuildingFront)
+      if (bld.front < p.minBuildingFront - 1e-3)
         fail(`Yapı cephesi ${bld.front.toFixed(2)} m < ${p.minBuildingFront} m`);
       if (bld.depth < p.minBuildingDepth - 1e-4)
         fail(`Yapı derinliği ${bld.depth.toFixed(2)} m < ${p.minBuildingDepth} m`);
@@ -1355,7 +1356,10 @@ function solveRowLegacy(
 
   const log: string[] = [];
   let best: RowSolution | null = null;
+  // Uzun sıralarda ince ayar dakikalarca sürebilir: sıra başına zaman bütçesi.
+  const rowT0 = Date.now();
   for (let n = nMax; n >= nMin; n--) {
+    if (best && Date.now() - rowT0 > 8000) break;
     let sol: RowSolution | null = null;
     const evaluate = (wA: number, wB: number): RowSolution => {
       const chain = equalAreaChainages(rowRing, frontLine, n, wA, wB);
@@ -1393,7 +1397,7 @@ function solveRowLegacy(
       cornerValidCount(s.parcels) === s.parcels.filter((x) => x.corner).length;
 
     sol = evaluate(1, 1);
-    if (tune && n > 1) {
+    if (tune && n > 1 && Date.now() - rowT0 < 5000) {
       // Köşe parseli, iki cepheden 5 m çekme ile üretilen asgari yapı bloğunu
       // barındıracak EN KÜÇÜK büyüklüğe getirilir; kalan alan ara parsellere eşit dağılır.
       // Köşe ağırlığı 1'in altından başlar: çekme mesafeleri (2×5 m) tam olarak
@@ -2418,6 +2422,9 @@ export function optimizeBlock(
     const better = (a: Cand | null, b: Cand | null) =>
       !a ? b : !b ? a : b.valid > a.valid || (b.valid === a.valid && b.score > a.score) ? b : a;
 
+    // Büyük adalarda aramanın dakikalarca sürmemesi için zaman bütçesi.
+    const searchT0 = Date.now();
+    const overBudget = (ms: number) => Date.now() - searchT0 > ms;
     const straight: { ws: number[]; c: Cand }[] = [];
     // Orta hat önce tam ortadan (0.5) denenir, gerekirse simetrik olarak uzaklaşılır.
     for (let w = 0.5; w >= 0.2999; w -= 0.02) {
@@ -2434,12 +2441,13 @@ export function optimizeBlock(
     //    bölüm hattı denenir; kırık noktaları küçük adımlarla kaydırılır.
     const kinked: { ws: number[]; c: Cand }[] = [];
     for (const s of straight.slice(0, 3)) {
+      if (overBudget(25000)) break;
       for (const segs of [2, 3]) {
         let ws = new Array(segs + 1).fill(s.ws[0]) as number[];
         let cur = evaluate(ws, false);
         if (!cur) continue;
-        for (let pass = 0; pass < 2; pass++) {
-          for (let i = 0; i <= segs; i++) {
+        for (let pass = 0; pass < 2 && !overBudget(25000); pass++) {
+          for (let i = 0; i <= segs && !overBudget(25000); i++) {
             for (const d of [0.06, -0.06, 0.03, -0.03]) {
               const cand = ws.slice();
               cand[i] = Math.min(0.68, Math.max(0.32, cand[i] + d));
@@ -2464,6 +2472,7 @@ export function optimizeBlock(
     //    Alternatif çözümler için aynı geçerli parsel sayısına sahip adaylar arasında gezinilir.
     const finals: Cand[] = [];
     for (const s of pool.slice(0, 4)) {
+      if (finals.length && overBudget(45000)) break;
       const tuned = evaluate(s.ws, true);
       const b = better(s.c, tuned);
       if (b) finals.push(b);
@@ -2485,6 +2494,7 @@ export function optimizeBlock(
     const ks = curvature > 1.5 ? [0.5, 0.46, 0.54, 0.42, 0.58] : [];
     if (ks.length) log.push(`Ada cephesi eğrisel (sapma ${curvature.toFixed(1)} m): uzun cepheye paralel ofset bölme adayları da denendi.`);
     for (const k of ks) {
+      if (finals.length && k !== 0.5 && overBudget(70000)) break;
       const c = evaluateParallel(k, true);
       if (c) finals.push(c);
       if (k === 0.5 && c && c.sols.every((s) => s && s.validCount > 0 && s.parcels.length === s.validCount)) break;
@@ -3161,6 +3171,12 @@ export function optimizeBlock(
       }
       return out.length ? out : [g];
     };
+    const bboxOf = (r: Pt[]): [number, number, number, number] => {
+      let a = Infinity, b = Infinity, c = -Infinity, d = -Infinity;
+      for (const v of r) { a = Math.min(a, v[0]); b = Math.min(b, v[1]); c = Math.max(c, v[0]); d = Math.max(d, v[1]); }
+      return [a, b, c, d];
+    };
+    const topoT0 = Date.now();
     const fillGaps = (): number => {
       let n = 0;
       for (let pass = 0; pass < 60; pass++) {
@@ -3174,7 +3190,10 @@ export function optimizeBlock(
             let best = -1;
             let bestScore = -Infinity;
             let bestCand: Parcel | null = null;
+            const sb = bboxOf(sp[0]);
             parcels.forEach((q, i) => {
+              const qb = bboxOf(q.ring);
+              if (qb[0] > sb[2] + 0.1 || qb[2] < sb[0] - 0.1 || qb[1] > sb[3] + 0.1 || qb[3] < sb[1] - 0.1) return;
               const u = mpUnion([[q.ring]], [sp]);
               if (u.length !== 1) return; // temas yok
               const cand = reEval(q, openRing(u[0][0]));
@@ -3209,6 +3228,7 @@ export function optimizeBlock(
         .filter((x) => !x.q.valid)
         .sort((a, b) => a.q.area - b.q.area);
       if (!bad.length || validNow < 1) break;
+      if (Date.now() - topoT0 > 20000) break;
       let improved = false;
       for (const { q } of bad) {
         const snap = parcels.slice();
@@ -3329,6 +3349,7 @@ export function optimizeBlock(
     // Hiçbiri olmazsa önceki durum korunur.
     let reshared = 0;
     for (let guard = 0; guard < 12; guard++) {
+      if (Date.now() - topoT0 > 40000) break;
       const bad = parcels.find((q) => !q.valid);
       if (!bad) break;
       const front = rows[bad.row]?.front ?? frontages[0];
@@ -3381,6 +3402,110 @@ export function optimizeBlock(
       reshared++;
     }
     if (reshared) log.push(`Koşul garantisi: ${reshared} koşulsuz parsel komşusuyla birlikte yeniden bölüştürüldü.`);
+
+    // 7) KÜME HALİNDE YENİDEN İFRAZ: birbirine değen koşulsuz parseller tek bölge
+    // olarak alınır, parsel sıralarına ayrılır ve her sıra kendi yol cephesi boyunca
+    // eşit alanlı parsellere yeniden bölünür. Yalnız geçerli parsel sayısı artarsa
+    // ve alan korunursa uygulanır.
+    let reparcelled = 0;
+    const touches = (a: Ring, b: Ring) => {
+      const ba = bboxOf(a), bb = bboxOf(b);
+      if (ba[0] > bb[2] + 0.05 || ba[2] < bb[0] - 0.05 || ba[1] > bb[3] + 0.05 || ba[3] < bb[1] - 0.05) return false;
+      return mpUnion([[a]], [[b]]).length === 1;
+    };
+    const subdivide = (R: Ring, front: Pt[], row: number, cornerAllowed: boolean): Parcel[] | null => {
+      const A = Math.abs(ringArea(R));
+      const L = polylineLength(front);
+      if (A < p.minArea - 0.05 || L <= 0) return null;
+      const target = (p.minArea + p.maxArea) / 2;
+      const ns = new Set<number>();
+      for (const n of [Math.round(A / target), Math.ceil(A / p.maxArea), Math.floor(A / p.minArea), Math.round(A / target) + 1, Math.round(A / target) - 1])
+        if (n >= 1 && A / n <= p.maxArea + 0.05 && A / n >= p.minArea - 0.05) ns.add(n);
+      let best: Parcel[] | null = null;
+      let bestValid = -1;
+      for (const n of [...ns].sort((a, b) => b - a)) {
+        const cuts: number[] = [];
+        for (let j = 1; j < n; j++) cuts.push(chainageForArea(R, front, (A * j) / n));
+        const out: Parcel[] = [];
+        let sum = 0;
+        let ok = true;
+        for (let j = 0; j < n && ok; j++) {
+          const piece = largestPoly(mpIntersect([[chainagePiece(R, front, j ? cuts[j - 1] : null, j < n - 1 ? cuts[j] : null)]], [[R]]));
+          if (!piece) { ok = false; break; }
+          const r = openRing(piece[0]);
+          const base = { no: 0, ring: r, area: Math.abs(ringArea(r)), row, corner: false, valid: false } as unknown as Parcel;
+          let q = reEval(base, r);
+          if (!q.valid && cornerAllowed && (j === 0 || j === n - 1)) {
+            const qc = reEval({ ...base, corner: true } as Parcel, r);
+            if (qc.valid) q = qc;
+          }
+          sum += q.area;
+          out.push(q);
+        }
+        if (!ok || Math.abs(sum - A) > 0.5) continue;
+        const v = out.filter((q) => q.valid).length;
+        if (v > bestValid) { bestValid = v; best = out; }
+        if (v === n) break;
+      }
+      return best;
+    };
+    if (typeof process !== "undefined" && process.env?.DBG_REPARCEL) console.error("REPARCEL start", Date.now() - topoT0, parcels.filter((q) => !q.valid).length);
+    for (let guard = 0; guard < 10 && Date.now() - topoT0 < 60000; guard++) {
+      const seed = parcels.filter((q) => !q.valid && !(q as Parcel & { _skip?: boolean })._skip).sort((a, b) => b.area - a.area)[0];
+      if (!seed) break;
+      const cluster = new Set<Parcel>([seed]);
+      for (let grow = true; grow; ) {
+        grow = false;
+        for (const q of parcels) {
+          if (q.valid || cluster.has(q)) continue;
+          if ([...cluster].some((c) => touches(c.ring, q.ring))) { cluster.add(q); grow = true; }
+        }
+      }
+      let region: MultiPoly = [];
+      for (const q of cluster) region = mpUnion(region, [[q.ring]]);
+      const regionArea = Math.abs(mpArea(region));
+      const hadCorner = [...cluster].some((q) => q.corner);
+      const rowIdx = rows.length === 2 ? [0, 1] : [seed.row];
+      const next: Parcel[] = [];
+      let rest = region;
+      let ok = true;
+      for (let k = 0; k < rowIdx.length; k++) {
+        const r = rowIdx[k];
+        const part = k === rowIdx.length - 1 ? rest : mpIntersect(rest, [[rows[r].ring]]);
+        rest = k === rowIdx.length - 1 ? [] : mpDifference(rest, part);
+        for (const poly of part) {
+          const pa = Math.abs(mpArea([poly]));
+          if (pa < 0.05) continue;
+          const R = openRing(poly[0]);
+          const front = rows[r]?.front ?? frontages[0];
+          const sub = subdivide(R, front, r, hadCorner);
+          if (!sub) { ok = false; break; }
+          next.push(...sub);
+        }
+        if (!ok) break;
+      }
+      const before = [...cluster].filter((q) => q.valid).length;
+      const after = next.filter((q) => q.valid).length;
+      const nextArea = next.reduce((a, q) => a + q.area, 0);
+      if (typeof process !== "undefined" && process.env?.DBG_REPARCEL) console.error("REPARCEL", cluster.size, regionArea.toFixed(1), ok, before, after, next.length, nextArea.toFixed(1), next.map((q) => q.area.toFixed(0) + (q.valid ? "" : "!" + (q.issues[0] ?? ""))).join(","));
+      if (!ok || after <= before || Math.abs(nextArea - regionArea) > 1) {
+        // İyileşme yoksa bu küme olduğu gibi bırakılır; sonsuz döngüyü önlemek için işaretlenir.
+        for (const q of cluster) (q as Parcel & { _skip?: boolean })._skip = true;
+        if (parcels.every((q) => q.valid || (q as Parcel & { _skip?: boolean })._skip)) break;
+        continue;
+      }
+      const firstIdx = Math.min(...[...cluster].map((q) => parcels.indexOf(q)));
+      const keep = parcels.filter((q) => !cluster.has(q));
+      keep.splice(Math.min(firstIdx, keep.length), 0, ...next);
+      parcels.length = 0;
+      parcels.push(...keep);
+      reparcelled += cluster.size;
+    }
+    for (const q of parcels) delete (q as Parcel & { _skip?: boolean })._skip;
+    if (reparcelled) {
+      fillGaps();
+      log.push(`Koşul garantisi: ${reparcelled} koşulsuz parsel bölgesi yol cephesine göre yeniden ifraz edildi.`);
+    }
   }
 
   parcels.forEach((x, i) => (x.no = i + 1));
