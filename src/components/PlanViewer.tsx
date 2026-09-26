@@ -346,6 +346,11 @@ export const PlanViewer = memo(function PlanViewer({
           <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
             <path d="M 40 0 L 0 0 0 40" fill="none" className="stroke-grid" strokeWidth="1" />
           </pattern>
+          {blocks.map((b, i) => (
+            <clipPath key={`split-clip-${b.id}`} id={`split-clip-${i}`}>
+              <polygon points={poly(b.ring)} />
+            </clipPath>
+          ))}
         </defs>
         {!basemap.enabled && <rect width="100%" height="100%" fill="url(#grid)" />}
 
@@ -450,15 +455,17 @@ export const PlanViewer = memo(function PlanViewer({
         {layers.ADA_ORTA_HAT &&
           blocks
             .filter((b) => b.splitLine && b.splitLine.length >= 2)
-            .flatMap((b) => [
-              <polyline
-                key={`${b.id}-mid`}
-                points={poly(b.splitLine)}
-                className="pointer-events-none fill-none stroke-splitline"
-                strokeWidth={1.8}
-                strokeDasharray="12 5"
-              />,
-              ...b.splitLine.map((q, i) => (
+            .map((b) => {
+              const blockIndex = blocks.indexOf(b);
+              return (
+                <g key={`${b.id}-mid`} clipPath={`url(#split-clip-${blockIndex})`}>
+                  <polyline
+                    points={poly(b.splitLine)}
+                    className="pointer-events-none fill-none stroke-splitline"
+                    strokeWidth={1.8}
+                    strokeDasharray="12 5"
+                  />
+                  {b.splitLine.map((q, i) => (
                 <circle
                   key={`${b.id}-mid-v-${i}`}
                   cx={q[0] * view.z + view.x}
@@ -466,8 +473,10 @@ export const PlanViewer = memo(function PlanViewer({
                   r={2.6}
                   className="pointer-events-none fill-splitline"
                 />
-              )),
-            ])}
+                  ))}
+                </g>
+              );
+            })}
 
         {layers.YAPI_INSAA_HATTI &&
           buildingLines.map((l, i) => (

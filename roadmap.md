@@ -53,4 +53,4 @@
 
 - [x] Parametreler bölümünü yüklenen referanstaki iki sütunlu kompakt kart düzenine uyarlamak.
 
-- [ ] Ada orta hattını kırmızı gösterip ada sınırı dışına taşmasını engellemek.
+- [x] Ada orta hattını kırmızı gösterip ada sınırı dışına taşmasını engellemek.
