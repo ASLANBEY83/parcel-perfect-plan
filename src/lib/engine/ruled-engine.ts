@@ -474,6 +474,71 @@ export function runEngine(
     return best;
   };
 
+  // Sıra onarımı: koşulsuz parselin komşu kesimleri kaydırılır ya da kaldırılır.
+  // Yalnız değişen parseller yeniden değerlendirilir; geçersiz sayısı azalmıyorsa geri alınır.
+  const rebuild = (sol: RowSol, cuts: Cut[]): RowSol | null => {
+    const rings = pieces(sol.row, cuts);
+    if (!rings) return null;
+    const n = rings.length;
+    const oldByKey = new Map<string, Parcel>();
+    const key = (r: Ring) => r.map((v) => v[0].toFixed(3) + "," + v[1].toFixed(3)).join(";");
+    for (const q of sol.parcels) oldByKey.set(key(q.ring), q);
+    const parcels = rings.map((r, j) => {
+      const old = oldByKey.get(key(r));
+      if (old) return old;
+      const corner = j === 0 || j === n - 1;
+      let q = evalP(r, sol.row, corner);
+      if (!q.valid && corner && n > 2) {
+        const q2 = evalP(r, sol.row, false);
+        if (q2.valid) q = q2;
+      }
+      return q;
+    });
+    const areas = parcels.map((q) => q.area);
+    const mean = areas.reduce((a, b) => a + b, 0) / n;
+    const spread = Math.sqrt(areas.reduce((a, b) => a + (b - mean) ** 2, 0) / n);
+    let acc = 0;
+    const targets = areas.slice(0, -1).map((a) => (acc += a));
+    return { row: sol.row, cuts, targets, parcels, valid: parcels.filter((q) => q.valid).length, spread };
+  };
+  const invalidCount = (s: RowSol) => s.parcels.length - s.valid;
+  const repairRow = (sol0: RowSol): RowSol => {
+    let sol = sol0;
+    const tried = new Set<string>();
+    for (let guard = 0; guard < 40 && invalidCount(sol) > 0 && !over(); guard++) {
+      const idx = sol.parcels.findIndex((q, j) => !q.valid && !tried.has(`${j}:${sol.parcels.length}`));
+      if (idx < 0) break;
+      tried.add(`${idx}:${sol.parcels.length}`);
+      let best: RowSol | null = null;
+      const consider = (c: RowSol | null) => {
+        if (!c) return;
+        if (invalidCount(c) >= invalidCount(sol)) return;
+        if (!best || invalidCount(c) < invalidCount(best) || (invalidCount(c) === invalidCount(best) && c.valid > best.valid)) best = c;
+      };
+      for (const ci of [idx - 1, idx]) {
+        if (ci < 0 || ci >= sol.cuts.length) continue;
+        // (a) Kesimi yol tarafında kaydır (arka nokta sabit: diklik aranmaz), sonra ikisini birlikte.
+        for (const d of [1, -1, 2, -2, 3, -3, 4, -4, 6, -6, 8, -8]) {
+          const cuts = sol.cuts.map((c) => ({ ...c }));
+          cuts[ci].sf = Math.max(0, Math.min(sol.row.Lf, cuts[ci].sf + d));
+          if ((ci > 0 && cuts[ci].sf <= cuts[ci - 1].sf) || (ci < cuts.length - 1 && cuts[ci].sf >= cuts[ci + 1].sf)) continue;
+          consider(rebuild(sol, cuts));
+          const cuts2 = cuts.map((c) => ({ ...c }));
+          cuts2[ci].sr = Math.max(0, Math.min(sol.row.Lr, sol.cuts[ci].sr + d));
+          consider(rebuild(sol, cuts2));
+          if (best && invalidCount(best) === 0) break;
+        }
+        // (b) Kesimi kaldır: komşusuyla birleşir.
+        consider(rebuild(sol, sol.cuts.filter((_, k) => k !== ci)));
+      }
+      if (best) {
+        sol = best;
+        tried.clear();
+      }
+    }
+    return sol;
+  };
+
   // ---------- 2) SIRA BÖLME ----------
   interface Layout { rows: Row[]; sols: RowSol[]; mid: Pt[]; fronts: Pt[][] }
   const layouts: Layout[] = [];
@@ -481,7 +546,8 @@ export function runEngine(
     const sols: RowSol[] = [];
     evalFronts = rows.length === 2 ? rows.map((r) => r.front) : frontages;
     for (const r of rows) {
-      const s = solveRowGeneral(r);
+      const s0 = solveRowGeneral(r);
+      const s = s0 && s0.valid < s0.parcels.length ? repairRow(s0) : s0;
       if (typeof process !== "undefined" && process.env?.["DBG_ENGINE"]) console.error("row", r.index, Date.now() - t0, s ? `${s.valid}/${s.parcels.length}` : "null");
       if (!s) return;
       sols.push(s);
