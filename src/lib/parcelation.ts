@@ -877,10 +877,11 @@ function evaluateParcel(
       issues.push(m);
     };
     // Parsel alanı HARD CONSTRAINT: kullanıcının girdiği min–max aralığı dışı geçersizdir.
-    if (area < p.minArea)
-      fail(`Parsel alanı minimum değerin altında: ${area.toFixed(1)} m² < ${p.minArea} m²`);
-    if (area > p.maxArea)
-      fail(`Parsel alanı maksimum değerin üzerinde: ${area.toFixed(1)} m² > ${p.maxArea} m²`);
+    // 0.05 m² sayısal tolerans: 399.99/400.01 gibi yuvarlama farkları ihlal sayılmaz.
+    if (area < p.minArea - 0.05)
+      fail(`Parsel alanı minimum değerin altında: ${area.toFixed(2)} m² < ${p.minArea} m²`);
+    if (area > p.maxArea + 0.05)
+      fail(`Parsel alanı maksimum değerin üzerinde: ${area.toFixed(2)} m² > ${p.maxArea} m²`);
     const minF = corner ? p.cornerFront : p.midFront;
     if (frontage < minF - 1e-6)
       fail(`${corner ? "Köşe" : "Ara"} parsel cephesi ${frontage.toFixed(2)} m < ${minF} m`);
@@ -909,9 +910,9 @@ function evaluateParcel(
         );
       else fail("Kurallara uygun yapı bloğu oluşturulamadı");
     } else {
-      if (bld.area < p.minBuildingArea)
+      if (bld.area < p.minBuildingArea - 1e-3)
         fail(`Yapı alanı ${bld.area.toFixed(1)} m² < ${p.minBuildingArea} m²`);
-      if (bld.front < p.minBuildingFront)
+      if (bld.front < p.minBuildingFront - 1e-3)
         fail(`Yapı cephesi ${bld.front.toFixed(2)} m < ${p.minBuildingFront} m`);
       if (bld.depth < p.minBuildingDepth - 1e-4)
         fail(`Yapı derinliği ${bld.depth.toFixed(2)} m < ${p.minBuildingDepth} m`);
@@ -1355,7 +1356,10 @@ function solveRowLegacy(
 
   const log: string[] = [];
   let best: RowSolution | null = null;
+  // Uzun sıralarda ince ayar dakikalarca sürebilir: sıra başına zaman bütçesi.
+  const rowT0 = Date.now();
   for (let n = nMax; n >= nMin; n--) {
+    if (best && Date.now() - rowT0 > 8000) break;
     let sol: RowSolution | null = null;
     const evaluate = (wA: number, wB: number): RowSolution => {
       const chain = equalAreaChainages(rowRing, frontLine, n, wA, wB);
@@ -1393,7 +1397,7 @@ function solveRowLegacy(
       cornerValidCount(s.parcels) === s.parcels.filter((x) => x.corner).length;
 
     sol = evaluate(1, 1);
-    if (tune && n > 1) {
+    if (tune && n > 1 && Date.now() - rowT0 < 5000) {
       // Köşe parseli, iki cepheden 5 m çekme ile üretilen asgari yapı bloğunu
       // barındıracak EN KÜÇÜK büyüklüğe getirilir; kalan alan ara parsellere eşit dağılır.
       // Köşe ağırlığı 1'in altından başlar: çekme mesafeleri (2×5 m) tam olarak
@@ -2418,6 +2422,9 @@ export function optimizeBlock(
     const better = (a: Cand | null, b: Cand | null) =>
       !a ? b : !b ? a : b.valid > a.valid || (b.valid === a.valid && b.score > a.score) ? b : a;
 
+    // Büyük adalarda aramanın dakikalarca sürmemesi için zaman bütçesi.
+    const searchT0 = Date.now();
+    const overBudget = (ms: number) => Date.now() - searchT0 > ms;
     const straight: { ws: number[]; c: Cand }[] = [];
     // Orta hat önce tam ortadan (0.5) denenir, gerekirse simetrik olarak uzaklaşılır.
     for (let w = 0.5; w >= 0.2999; w -= 0.02) {
@@ -2434,12 +2441,13 @@ export function optimizeBlock(
     //    bölüm hattı denenir; kırık noktaları küçük adımlarla kaydırılır.
     const kinked: { ws: number[]; c: Cand }[] = [];
     for (const s of straight.slice(0, 3)) {
+      if (overBudget(25000)) break;
       for (const segs of [2, 3]) {
         let ws = new Array(segs + 1).fill(s.ws[0]) as number[];
         let cur = evaluate(ws, false);
         if (!cur) continue;
-        for (let pass = 0; pass < 2; pass++) {
-          for (let i = 0; i <= segs; i++) {
+        for (let pass = 0; pass < 2 && !overBudget(25000); pass++) {
+          for (let i = 0; i <= segs && !overBudget(25000); i++) {
             for (const d of [0.06, -0.06, 0.03, -0.03]) {
               const cand = ws.slice();
               cand[i] = Math.min(0.68, Math.max(0.32, cand[i] + d));
@@ -2464,6 +2472,7 @@ export function optimizeBlock(
     //    Alternatif çözümler için aynı geçerli parsel sayısına sahip adaylar arasında gezinilir.
     const finals: Cand[] = [];
     for (const s of pool.slice(0, 4)) {
+      if (finals.length && overBudget(45000)) break;
       const tuned = evaluate(s.ws, true);
       const b = better(s.c, tuned);
       if (b) finals.push(b);
@@ -2485,6 +2494,7 @@ export function optimizeBlock(
     const ks = curvature > 1.5 ? [0.5, 0.46, 0.54, 0.42, 0.58] : [];
     if (ks.length) log.push(`Ada cephesi eğrisel (sapma ${curvature.toFixed(1)} m): uzun cepheye paralel ofset bölme adayları da denendi.`);
     for (const k of ks) {
+      if (finals.length && k !== 0.5 && overBudget(70000)) break;
       const c = evaluateParallel(k, true);
       if (c) finals.push(c);
       if (k === 0.5 && c && c.sols.every((s) => s && s.validCount > 0 && s.parcels.length === s.validCount)) break;
