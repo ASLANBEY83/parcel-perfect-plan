@@ -10,7 +10,6 @@ import { openReportPdf } from "@/lib/report";
 import { sampleDxf } from "@/lib/sample";
 import { TM_PRESETS, guessTM, tmToLonLat } from "@/lib/basemap";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -481,16 +480,13 @@ function Index() {
             </PanelItem>
 
             <PanelItem value="parametre" icon={<SlidersHorizontal className="size-3.5" />} title="Parametreler">
-              <Tabs defaultValue="parsel">
-                <TabsList className="grid w-full grid-cols-2">
-                  <TabsTrigger value="parsel" className="font-mono text-[10px] uppercase tracking-wider">
-                    Parsel
-                  </TabsTrigger>
-                  <TabsTrigger value="yapi" className="font-mono text-[10px] uppercase tracking-wider">
-                    Yapı
-                  </TabsTrigger>
-                </TabsList>
-                <TabsContent value="parsel" className="mt-3 grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 gap-2 xl:grid-cols-2">
+                <section className="rounded-md border border-primary/55 bg-primary/5 p-2">
+                  <h3 className="mb-2 flex items-center gap-2 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-primary">
+                    <span className="size-2 rounded-full bg-primary" />
+                    Parsel Verileri
+                  </h3>
+                  <div className="grid grid-cols-2 gap-x-2 gap-y-2">
                   <Num tone="blue" label="Min parsel (m²)" v={params.minArea} set={(v) => setParams({ ...params, minArea: v })} />
                   <Num tone="blue" label="Max parsel (m²)" v={params.maxArea} set={(v) => setParams({ ...params, maxArea: v })} />
                   <Num tone="blue" label="Ara cephe (m)" v={params.midFront} set={(v) => setParams({ ...params, midFront: v })} />
@@ -502,8 +498,14 @@ function Index() {
                     v={params.tolerance}
                     set={(v) => setParams({ ...params, tolerance: v })}
                   />
-                </TabsContent>
-                <TabsContent value="yapi" className="mt-3 grid grid-cols-2 gap-2">
+                  </div>
+                </section>
+                <section className="rounded-md border border-emerald-500/55 bg-emerald-500/5 p-2">
+                  <h3 className="mb-2 flex items-center gap-2 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-400">
+                    <span className="size-2 rounded-full bg-emerald-400" />
+                    Yapı Kuralları
+                  </h3>
+                  <div className="grid grid-cols-2 gap-x-2 gap-y-2">
                   <Num tone="green" label="Ön çekme (m)" v={params.frontSetback} set={(v) => setParams({ ...params, frontSetback: v })} />
                   <Num tone="green" label="Yan çekme (m)" v={params.sideSetback} set={(v) => setParams({ ...params, sideSetback: v })} />
                   <Num tone="green" label="Arka çekme (m)" v={params.rearSetback} set={(v) => setParams({ ...params, rearSetback: v })} />
@@ -526,8 +528,9 @@ function Index() {
                     set={(v) => setParams({ ...params, minBuildingDepth: v })}
                   />
                   <Num tone="green" label="TAKS" step={0.01} v={params.taks} set={(v) => setParams({ ...params, taks: v })} />
-                </TabsContent>
-              </Tabs>
+                  </div>
+                </section>
+              </div>
             </PanelItem>
 
             <PanelItem value="altlik" icon={<MapIcon className="size-3.5" />} title="Harita Altlığı">
@@ -981,7 +984,7 @@ function Num({
         className={cn(
           "h-8 bg-background/60 px-2 font-mono text-xs tabular-nums",
           tone === "blue" && "border-primary/30 focus-visible:border-primary",
-          tone === "green" && "border-accent-foreground/20",
+          tone === "green" && "border-emerald-500/45 bg-emerald-500/5 focus-visible:border-emerald-400 focus-visible:ring-emerald-400/30",
         )}
       />
     </Field>
