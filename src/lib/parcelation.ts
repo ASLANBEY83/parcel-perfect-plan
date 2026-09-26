@@ -3130,34 +3130,107 @@ export function optimizeBlock(
       }
       taken = mpUnion(taken, [[parcels[i].ring]]);
     }
-    // 3) Boşluklar: her artık parça ortak sınırı olan komşuya zorunlu eklenir
-    for (let pass = 0; pass < 3; pass++) {
-      let uni: MultiPoly = [];
-      for (const pc of parcels) uni = mpUnion(uni, [[pc.ring]]);
-      const gaps = mpDifference(blockMp, uni).filter((poly) => Math.abs(mpArea([poly])) > 0.01);
-      if (!gaps.length) break;
-      for (const g of gaps) {
-        let best = -1;
-        let bestScore = -Infinity;
-        let bestRing: Ring | null = null;
-        parcels.forEach((q, i) => {
-          const u = mpUnion([[q.ring]], [g]);
-          if (u.length !== 1) return; // temas yok
-          const r = openRing(u[0][0]);
-          const cand = reEval(q, r);
-          const inRange = cand.area <= p.maxArea + p.tolerance ? 1 : 0;
-          const score = Number(cand.valid) * 1e6 + inRange * 1e4 - cand.area / 1000;
-          if (score > bestScore) {
-            bestScore = score;
-            best = i;
-            bestRing = r;
-          }
-        });
-        if (best >= 0 && bestRing) {
-          parcels[best] = reEval(parcels[best], bestRing);
-          changed++;
-        }
+    // 3) Boşluklar: artık alan cepheye dik şeritlere bölünür ve her şerit, ortak
+    // sınırı olan komşulardan EN DÜŞÜK alanlı (tercihen geçerli kalan) parsele
+    // verilir. Böylece artık tek parsele yığılmaz, aradaki/düşük parsellere
+    // ortak dağıtılır.
+    const stripsOf = (g: Poly): MultiPoly => {
+      const gc = centroid(g[0]);
+      const near = parcels
+        .slice()
+        .sort((a, b) => dist(centroid(a.ring), gc) - dist(centroid(b.ring), gc))[0];
+      const fr = (near && rows[near.row]?.front) || frontages[0];
+      let d: Pt = fr && fr.length >= 2 ? sub(fr[fr.length - 1], fr[0]) : [1, 0];
+      const L = Math.hypot(d[0], d[1]) || 1;
+      d = [d[0] / L, d[1] / L];
+      const nrm: Pt = [-d[1], d[0]];
+      let t0 = Infinity, t1 = -Infinity, s0 = Infinity, s1 = -Infinity;
+      for (const v of g[0]) {
+        const t = dot(v, d), s = dot(v, nrm);
+        t0 = Math.min(t0, t); t1 = Math.max(t1, t);
+        s0 = Math.min(s0, s); s1 = Math.max(s1, s);
       }
+      const area = Math.abs(mpArea([g]));
+      const n = Math.min(40, Math.max(1, Math.ceil(area / 15)));
+      const at = (t: number, s: number): Pt => [d[0] * t + nrm[0] * s, d[1] * t + nrm[1] * s];
+      const out: MultiPoly = [];
+      for (let i = 0; i < n; i++) {
+        const a = t0 + ((t1 - t0) * i) / n, b = t0 + ((t1 - t0) * (i + 1)) / n;
+        const band: Ring = [at(a, s0 - 1), at(b, s0 - 1), at(b, s1 + 1), at(a, s1 + 1)];
+        for (const q of mpIntersect([g], [[band]])) if (Math.abs(mpArea([q])) > 0.005) out.push(q);
+      }
+      return out.length ? out : [g];
+    };
+    const fillGaps = (): number => {
+      let n = 0;
+      for (let pass = 0; pass < 60; pass++) {
+        let uni: MultiPoly = [];
+        for (const pc of parcels) uni = mpUnion(uni, [[pc.ring]]);
+        const gaps = mpDifference(blockMp, uni).filter((poly) => Math.abs(mpArea([poly])) > 0.01);
+        if (!gaps.length) break;
+        let any = false;
+        for (const g of gaps) {
+          for (const sp of stripsOf(g)) {
+            let best = -1;
+            let bestScore = -Infinity;
+            let bestCand: Parcel | null = null;
+            parcels.forEach((q, i) => {
+              const u = mpUnion([[q.ring]], [sp]);
+              if (u.length !== 1) return; // temas yok
+              const cand = reEval(q, openRing(u[0][0]));
+              const inRange = cand.area <= p.maxArea + p.tolerance ? 1 : 0;
+              const score = Number(cand.valid) * 1e6 + inRange * 1e4 - q.area;
+              if (score > bestScore) {
+                bestScore = score;
+                best = i;
+                bestCand = cand;
+              }
+            });
+            if (best >= 0 && bestCand) {
+              parcels[best] = bestCand;
+              n++;
+              any = true;
+            }
+          }
+        }
+        if (!any) break;
+      }
+      return n;
+    };
+    changed += fillGaps();
+    // 3b) Koşulları sağlamayan parsel kalırsa kaldırılır ve alanı komşulara
+    // dağıtılır; geçerli parsel sayısı artmıyorsa işlem geri alınır.
+    let dissolved = 0;
+    for (let guard = 0; guard < 20; guard++) {
+      const validNow = parcels.filter((q) => q.valid).length;
+      const bad = parcels
+        .map((q, i) => ({ q, i }))
+        .filter((x) => !x.q.valid)
+        .sort((a, b) => a.q.area - b.q.area);
+      if (!bad.length || validNow < 1) break;
+      let improved = false;
+      for (const { q } of bad) {
+        const snap = parcels.slice();
+        parcels.splice(parcels.indexOf(q), 1);
+        fillGaps();
+        let uni: MultiPoly = [];
+        for (const pc of parcels) uni = mpUnion(uni, [[pc.ring]]);
+        const gapLeft = mpDifference(blockMp, uni).reduce((s, poly) => s + Math.abs(mpArea([poly])), 0);
+        const invalidAfter = parcels.filter((x) => !x.valid).length;
+        const invalidBefore = snap.filter((x) => !x.valid).length;
+        if (gapLeft < 0.05 && invalidAfter < invalidBefore) {
+          dissolved++;
+          improved = true;
+          break;
+        }
+        parcels.length = 0;
+        parcels.push(...snap);
+      }
+      if (!improved) break;
+    }
+    if (dissolved) {
+      changed += dissolved;
+      log.push(`Koşul garantisi: ${dissolved} koşulsuz parselin alanı komşu parsellere ortak dağıtıldı.`);
     }
     // 4) Düğüm uyumu: yakın köşeler aynı koordinat, T-bağlantılarda karşı kenara düğüm eklenir
     const EPS = 0.02;
