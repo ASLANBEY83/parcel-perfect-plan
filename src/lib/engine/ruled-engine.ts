@@ -512,7 +512,7 @@ export function runEngine(
       let best: RowSol | null = null;
       const consider = (c: RowSol | null) => {
         if (!c) return;
-        if (invalidCount(c) >= invalidCount(sol)) return;
+        if (invalidCount(c) >= invalidCount(sol) || c.valid < sol.valid) return;
         if (!best || invalidCount(c) < invalidCount(best) || (invalidCount(c) === invalidCount(best) && c.valid > best.valid)) best = c;
       };
       for (const ci of [idx - 1, idx]) {

@@ -38,6 +38,7 @@ import {
   ROAD_BAND,
   SOLUTION_SCORE_WEIGHTS,
 } from "./parcelation-config";
+import { runEngine } from "./engine/ruled-engine";
 
 export interface Params {
   minArea: number;
@@ -2261,8 +2262,7 @@ function sharedBoundaryLine(a: Ring, b: Ring, block: Ring, fallback: Pt[]): Pt[]
 }
 
 
-export function optimizeBlock(
-
+function optimizeBlockLegacy(
   ring0: Ring,
   buildingLines: Pt[][],
   p: Params,
@@ -3604,6 +3604,41 @@ export function summarize(blocks: BlockResult[]) {
 }
 
 export const _internals = { len, mul, sub, add, dot, dist, pieceBetween };
+
+/**
+ * Ada parselasyonu. Önce genel 5 aşamalı motor (src/lib/engine) çalışır; tüm
+ * parseller koşulları sağlıyor ve artık alan yoksa sonucu doğrudan kullanılır.
+ * Aksi hâlde önceki motor da denenir ve daha iyi sonuç (az koşulsuz parsel →
+ * az artık alan → çok geçerli parsel) seçilir.
+ */
+export function optimizeBlock(
+  ring0: Ring,
+  buildingLines: Pt[][],
+  p: Params,
+  opts: { name: string; id: string; manualFrontages?: Pt[][]; variant?: number },
+): BlockResult {
+  let eng: BlockResult | null = null;
+  try {
+    eng = runEngine(ring0, buildingLines, p, opts, _engineHelpers);
+  } catch (e) {
+    eng = null;
+  }
+  const bad = (r: BlockResult) => r.parcels.filter((q) => !q.valid).length;
+  if (eng && eng.parcels.length && bad(eng) === 0 && eng.leftoverArea < 0.05) return eng;
+  const legacy = optimizeBlockLegacy(ring0, buildingLines, p, opts);
+  if (!eng || !eng.parcels.length) return legacy;
+  const key = (r: BlockResult) => [bad(r), r.leftoverArea > 0.05 ? 1 : 0, -(r.parcels.length - bad(r))];
+  const ke = key(eng);
+  const kl = key(legacy);
+  for (let i = 0; i < ke.length; i++) {
+    if (ke[i] !== kl[i]) {
+      const pick = ke[i] < kl[i] ? eng : legacy;
+      pick.log.push(pick === eng ? "Genel motor sonucu seçildi." : "Genel motor tüm koşulları sağlayamadı; önceki motorun daha iyi sonucu seçildi.");
+      return pick;
+    }
+  }
+  return eng;
+}
 
 /** Genel motorun (src/lib/engine) kullandığı doğrulanmış yardımcılar. */
 export const _engineHelpers = {
