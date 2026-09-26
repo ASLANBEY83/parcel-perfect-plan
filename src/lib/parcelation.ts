@@ -3449,7 +3449,7 @@ export function optimizeBlock(
       }
       return best;
     };
-    if (typeof process !== "undefined" && process.env?.DBG_REPARCEL) console.error("REPARCEL start", Date.now() - topoT0, parcels.filter((q) => !q.valid).length);
+    if (typeof process !== "undefined" && process.env?.["DBG_REPARCEL"]) console.error("REPARCEL start", Date.now() - topoT0, parcels.filter((q) => !q.valid).length);
     for (let guard = 0; guard < 10 && Date.now() - topoT0 < 60000; guard++) {
       const seed = parcels.filter((q) => !q.valid && !(q as Parcel & { _skip?: boolean })._skip).sort((a, b) => b.area - a.area)[0];
       if (!seed) break;
@@ -3487,7 +3487,7 @@ export function optimizeBlock(
       const before = [...cluster].filter((q) => q.valid).length;
       const after = next.filter((q) => q.valid).length;
       const nextArea = next.reduce((a, q) => a + q.area, 0);
-      if (typeof process !== "undefined" && process.env?.DBG_REPARCEL) console.error("REPARCEL", cluster.size, regionArea.toFixed(1), ok, before, after, next.length, nextArea.toFixed(1), next.map((q) => q.area.toFixed(0) + (q.valid ? "" : "!" + (q.issues[0] ?? ""))).join(","));
+      if (typeof process !== "undefined" && process.env?.["DBG_REPARCEL"]) console.error("REPARCEL", cluster.size, regionArea.toFixed(1), ok, before, after, next.length, nextArea.toFixed(1), next.map((q) => q.area.toFixed(0) + (q.valid ? "" : "!" + (q.issues[0] ?? ""))).join(","));
       if (!ok || after <= before || Math.abs(nextArea - regionArea) > 1) {
         // İyileşme yoksa bu küme olduğu gibi bırakılır; sonsuz döngüyü önlemek için işaretlenir.
         for (const q of cluster) (q as Parcel & { _skip?: boolean })._skip = true;
@@ -3604,3 +3604,13 @@ export function summarize(blocks: BlockResult[]) {
 }
 
 export const _internals = { len, mul, sub, add, dot, dist, pieceBetween };
+
+/** Genel motorun (src/lib/engine) kullandığı doğrulanmış yardımcılar. */
+export const _engineHelpers = {
+  evaluateParcel,
+  detectRoadFrontages,
+  roadChains,
+  simplifyRing,
+  extendLineToRing,
+  sideMaskToward,
+};
