@@ -3179,7 +3179,8 @@ export function optimizeBlock(
               if (u.length !== 1) return; // temas yok
               const cand = reEval(q, openRing(u[0][0]));
               const inRange = cand.area <= p.maxArea + p.tolerance ? 1 : 0;
-              const score = Number(cand.valid) * 1e6 + inRange * 1e4 - q.area;
+              const ownRow = rows.length === 2 && rows[q.row]?.ring && pointInRing(centroid(sp[0]), rows[q.row].ring) ? 1 : 0;
+              const score = Number(cand.valid) * 1e6 + ownRow * 1e5 + inRange * 1e4 - q.area;
               if (score > bestScore) {
                 bestScore = score;
                 best = i;
@@ -3269,6 +3270,117 @@ export function optimizeBlock(
       q.area = Math.abs(ringArea(rings[i]));
     });
     if (changed) log.push(`Topoloji zorunluluğu: ${changed} parsel sınırı ada/komşu sınırlarına oturtuldu.`);
+
+    // 5) Geometri temizliği: geri dönen sivri uçlar (A-B-A), tekrar eden ve
+    // doğrusal ara noktalar kaldırılır; örtüşen kısım tek parsele bırakılır.
+    const cleanRing = (r: Ring): Ring => {
+      let o = r.slice();
+      for (let it = 0; it < 50; it++) {
+        const n = o.length;
+        if (n < 4) break;
+        let idx = -1;
+        for (let k = 0; k < n; k++) {
+          const a = o[(k - 1 + n) % n], v = o[k], b = o[(k + 1) % n];
+          if (dist(a, v) < 1e-3 || dist(a, b) < EPS) { idx = k; break; }
+          const cr = Math.abs((v[0] - a[0]) * (b[1] - a[1]) - (v[1] - a[1]) * (b[0] - a[0]));
+          if (cr / Math.max(dist(a, b), 1e-9) < 0.005 && dot(sub(v, a), sub(b, v)) > 0) { idx = k; break; }
+          // İnce iğne/sivri uç: çok küçük üçgen alanı ve dar açı.
+          if (cr * 0.5 < 0.2 && dot(norm(sub(a, v)), norm(sub(b, v))) > 0.97) { idx = k; break; }
+        }
+        if (idx < 0) break;
+        // Sivri uçta (a≈b) hem uç hem de tekrar eden nokta kalkar.
+        const a = o[(idx - 1 + o.length) % o.length], b = o[(idx + 1) % o.length];
+        o.splice(idx, 1);
+        if (dist(a, b) < EPS && o.length > 3) o.splice(idx % o.length, 1);
+      }
+      const lp = largestPoly(mpIntersect([[o as Ring]], blockMp));
+      return lp ? openRing(lp[0]) : (o as Ring);
+    };
+    // Koşulsuz parselin karşı sıraya taşan (L biçimli) kısmı kendi sırasına kırpılır;
+    // kırpılan parça boşluk doldurmada karşı sıranın parsellerine verilir.
+    if (rows.length === 2) {
+      parcels.forEach((q, i) => {
+        if (q.valid) return;
+        const own = rows[q.row]?.ring;
+        if (!own) return;
+        const lp = largestPoly(mpIntersect([[q.ring]], [[own]]));
+        if (lp && Math.abs(ringArea(lp[0])) > 0.5 * q.area) parcels[i] = reEval(q, openRing(lp[0]));
+      });
+    }
+    {
+      const order = parcels.map((_, i) => i).sort((a, b) => Number(parcels[b].valid) - Number(parcels[a].valid));
+      let taken: MultiPoly = [];
+      for (const i of order) {
+        let r = cleanRing(parcels[i].ring);
+        if (taken.length) {
+          const lp = largestPoly(mpDifference([[r]], taken));
+          if (lp) r = cleanRing(openRing(lp[0]));
+        }
+        parcels[i] = reEval(parcels[i], r);
+        taken = mpUnion(taken, [[parcels[i].ring]]);
+      }
+      fillGaps();
+      parcels.forEach((q, i) => (parcels[i] = reEval(q, cleanRing(q.ring))));
+    }
+
+    // 6) YENİDEN BÖLÜŞTÜRME: hâlâ koşul sağlamayan parsel, aynı sıradaki komşusuyla
+    // birleştirilip yola dik tek bir kesimle alan olarak yeniden paylaştırılır.
+    // İki parça da koşulları sağlamazsa iki parsel tek parsel olarak birleştirilir.
+    // Hiçbiri olmazsa önceki durum korunur.
+    let reshared = 0;
+    for (let guard = 0; guard < 12; guard++) {
+      const bad = parcels.find((q) => !q.valid);
+      if (!bad) break;
+      const front = rows[bad.row]?.front ?? frontages[0];
+      const neigh = parcels
+        .filter((o) => o !== bad && o.row === bad.row)
+        .sort((a, b) => dist(centroid(a.ring), centroid(bad.ring)) - dist(centroid(b.ring), centroid(bad.ring)))
+        .slice(0, 2);
+      let fixed = false;
+      for (const o of neigh) {
+        // Birleşik bölge, diğer tüm parsellerin ada içindeki tümleyeni olarak alınır;
+        // böylece kendi kendini kesen halkalar yerine temiz bir poligon elde edilir.
+        let others: MultiPoly = [];
+        for (const x of parcels) if (x !== bad && x !== o) others = mpUnion(others, [[x.ring]]);
+        const u = largestPoly(mpDifference(blockMp, others));
+        if (!u || !front || front.length < 2) continue;
+        const U = cleanRing(openRing(u[0]));
+        const total = Math.abs(ringArea(U));
+        const L = polylineLength(front);
+        let best: [Parcel, Parcel] | null = null;
+        let bestDev = Infinity;
+        for (let k = 0; k <= 30 && total >= 2 * (p.minArea - p.tolerance); k++) {
+          const target = total / 2 + ((k % 2 ? 1 : -1) * Math.ceil(k / 2) * total) / 80;
+          const s = chainageForArea(U, front, target);
+          if (s <= 0 || s >= L) continue;
+          const partA = largestPoly(mpIntersect([[chainagePiece(U, front, null, s)]], [[U]]));
+          const partB = largestPoly(mpIntersect([[chainagePiece(U, front, s, null)]], [[U]]));
+          if (!partA || !partB) continue;
+          const A = reEval(bad, cleanRing(openRing(partA[0])));
+          const B = reEval(o, cleanRing(openRing(partB[0])));
+          if (!A.valid || !B.valid) continue;
+          if (Math.abs(A.area + B.area - total) > 0.05) continue;
+          const dev = Math.abs(A.area - B.area);
+          if (dev < bestDev) { bestDev = dev; best = [A, B]; }
+        }
+        if (best) {
+          parcels[parcels.indexOf(bad)] = best[0];
+          parcels[parcels.indexOf(o)] = best[1];
+          fixed = true;
+          break;
+        }
+        const merged = reEval({ ...o, corner: o.corner || bad.corner }, U);
+        if (merged.valid) {
+          parcels.splice(parcels.indexOf(o), 1, merged);
+          parcels.splice(parcels.indexOf(bad), 1);
+          fixed = true;
+          break;
+        }
+      }
+      if (!fixed) break;
+      reshared++;
+    }
+    if (reshared) log.push(`Koşul garantisi: ${reshared} koşulsuz parsel komşusuyla birlikte yeniden bölüştürüldü.`);
   }
 
   parcels.forEach((x, i) => (x.no = i + 1));
