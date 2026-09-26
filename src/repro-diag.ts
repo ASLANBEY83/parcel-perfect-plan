@@ -3,7 +3,7 @@ import { parseDxf, polygonsOfLayer, linesOfLayer } from "./lib/dxf";
 import { optimizeBlock, defaultParams } from "./lib/parcelation";
 import { computeBlockDebug } from "./lib/parcel-debug";
 
-const text = readFileSync("/tmp/browser/split-line/353ADA.DXF", "latin1");
+const text = readFileSync("/tmp/user-uploads/353ADA.DXF", "latin1");
 const doc = parseDxf(text);
 console.log("layers:", doc.layers);
 const adaLayer = doc.layers.find(l => /ada/i.test(l)) ?? doc.layers[0];
