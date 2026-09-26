@@ -290,7 +290,6 @@ function pieces(row: Row, cuts: Cut[]): Ring[] | null {
     // Maske ile sıra sınırı arasındaki küçük artıklar değdikleri parçaya eklenir.
     for (const g of extras) {
       if (mpArea([g]) < 1e-3) continue;
-      if (mpArea([g]) > 1e9) { if (typeof process !== "undefined" && process.env?.["DBG_ENGINE"]) console.error("extra big", mpArea([g]).toFixed(1)); return null; }
       let done = false;
       for (let k = 0; k < main.length && !done; k++) {
         const u = mpUnion([[main[k]]], [g]);
@@ -299,10 +298,8 @@ function pieces(row: Row, cuts: Cut[]): Ring[] | null {
           done = true;
         }
       }
-      if (!done) { if (typeof process !== "undefined" && process.env?.["DBG_ENGINE"]) console.error("extra orphan", mpArea([g]).toFixed(1)); return null; }
     }
   } catch (e) {
-    if (typeof process !== "undefined" && process.env?.["DBG_ENGINE"]) console.error("pieces err", String(e));
     return null;
   }
   return main.map((r) => cleanRing(r));
@@ -548,7 +545,6 @@ export function runEngine(
     for (const r of rows) {
       const s0 = solveRowGeneral(r);
       const s = s0 && s0.valid < s0.parcels.length ? repairRow(s0) : s0;
-      if (typeof process !== "undefined" && process.env?.["DBG_ENGINE"]) console.error("row", r.index, Date.now() - t0, s ? `${s.valid}/${s.parcels.length}` : "null");
       if (!s) return;
       sols.push(s);
     }
@@ -585,7 +581,6 @@ export function runEngine(
       } catch {
         continue;
       }
-      const dbg = typeof process !== "undefined" && process.env?.["DBG_ENGINE"];
       if (dbg) console.error("split", w, !!ra, !!rb, ra && ringArea(ra[0]), rb && ringArea(rb[0]), adaArea);
       if (!ra || !rb) continue;
       if (dist(B[0], midFull[0]) > dist(B[B.length - 1], midFull[0])) B = B.slice().reverse();
