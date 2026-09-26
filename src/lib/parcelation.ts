@@ -3171,6 +3171,12 @@ export function optimizeBlock(
       }
       return out.length ? out : [g];
     };
+    const bboxOf = (r: Pt[]): [number, number, number, number] => {
+      let a = Infinity, b = Infinity, c = -Infinity, d = -Infinity;
+      for (const v of r) { a = Math.min(a, v[0]); b = Math.min(b, v[1]); c = Math.max(c, v[0]); d = Math.max(d, v[1]); }
+      return [a, b, c, d];
+    };
+    const topoT0 = Date.now();
     const fillGaps = (): number => {
       let n = 0;
       for (let pass = 0; pass < 60; pass++) {
@@ -3184,7 +3190,10 @@ export function optimizeBlock(
             let best = -1;
             let bestScore = -Infinity;
             let bestCand: Parcel | null = null;
+            const sb = bboxOf(sp[0]);
             parcels.forEach((q, i) => {
+              const qb = bboxOf(q.ring);
+              if (qb[0] > sb[2] + 0.1 || qb[2] < sb[0] - 0.1 || qb[1] > sb[3] + 0.1 || qb[3] < sb[1] - 0.1) return;
               const u = mpUnion([[q.ring]], [sp]);
               if (u.length !== 1) return; // temas yok
               const cand = reEval(q, openRing(u[0][0]));
@@ -3219,6 +3228,7 @@ export function optimizeBlock(
         .filter((x) => !x.q.valid)
         .sort((a, b) => a.q.area - b.q.area);
       if (!bad.length || validNow < 1) break;
+      if (Date.now() - topoT0 > 20000) break;
       let improved = false;
       for (const { q } of bad) {
         const snap = parcels.slice();
@@ -3339,6 +3349,7 @@ export function optimizeBlock(
     // Hiçbiri olmazsa önceki durum korunur.
     let reshared = 0;
     for (let guard = 0; guard < 12; guard++) {
+      if (Date.now() - topoT0 > 40000) break;
       const bad = parcels.find((q) => !q.valid);
       if (!bad) break;
       const front = rows[bad.row]?.front ?? frontages[0];
