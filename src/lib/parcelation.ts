@@ -2215,6 +2215,47 @@ function extendLineToRing(line: Pt[], ring: Ring): Pt[] {
   return out;
 }
 
+/**
+ * İki sıra halkasının ada dış sınırında olmayan ortak kenarlarını tek bir hat
+ * olarak çıkarır. Böylece gösterilen/aktarılan ada orta hattı teorik bölme
+ * adayını değil, parsellerin gerçekten kullandığı ortak sınırı izler.
+ */
+function sharedBoundaryLine(a: Ring, b: Ring, block: Ring, fallback: Pt[]): Pt[] {
+  if (a.length < 3 || b.length < 3) return fallback;
+  const close = (r: Ring): Pt[] => [...r, r[0]];
+  const blockLine = close(block);
+  const otherLine = close(b);
+  const eps = 1e-4;
+  const flags = a.map((p, i) => {
+    const q = a[(i + 1) % a.length];
+    const mid: Pt = [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2];
+    return nearestOnPolyline(mid, blockLine).d > eps && nearestOnPolyline(mid, otherLine).d <= eps;
+  });
+
+  const runs: Pt[][] = [];
+  for (let start = 0; start < flags.length; start++) {
+    if (!flags[start] || flags[(start - 1 + flags.length) % flags.length]) continue;
+    const run: Pt[] = [[a[start][0], a[start][1]]];
+    let i = start;
+    while (flags[i]) {
+      const q = a[(i + 1) % a.length];
+      run.push([q[0], q[1]]);
+      i = (i + 1) % a.length;
+      if (i === start) break;
+    }
+    if (run.length >= 2) runs.push(run);
+  }
+  if (!runs.length) return fallback;
+  runs.sort((x, y) => polylineLength(y) - polylineLength(x));
+  const best = runs[0];
+  if (fallback.length >= 2) {
+    const same = dist(best[0], fallback[0]) + dist(best[best.length - 1], fallback[fallback.length - 1]);
+    const reverse = dist(best[0], fallback[fallback.length - 1]) + dist(best[best.length - 1], fallback[0]);
+    if (reverse < same) best.reverse();
+  }
+  return best;
+}
+
 
 export function optimizeBlock(
 
@@ -2527,7 +2568,11 @@ export function optimizeBlock(
 
   // ADA AYRIM HATTI kırık noktaları da tolerans içinde birleşme hedefi olur:
   // parsel köşesi ayrım hattı kırığına tolerans kadar yakınsa köşe TAM o noktaya taşınır.
-  const splitFull: Pt[] = splitMid.length >= 2 ? extendLineToRing(splitMid, ring) : [];
+  const sharedRowLine =
+    splitMid.length >= 2 && rows.length === 2
+      ? sharedBoundaryLine(rows[0].ring, rows[1].ring, ring, splitMid)
+      : splitMid;
+  const splitFull: Pt[] = sharedRowLine.length >= 2 ? extendLineToRing(sharedRowLine, ring) : [];
   const snapTargets: Pt[] = [...ring, ...splitFull];
 
   // Sırt sırta sıralarda, orta hatta yakın karşılıklı köşeler 1 m toleransla tek noktaya indirgenir.
@@ -3061,6 +3106,22 @@ export function optimizeBlock(
   const leftover = mpDifference(blockMp, union).filter((poly) => Math.abs(mpArea([poly])) > 0.5);
   const leftoverArea = mpArea(leftover);
 
+  // Alan ve tolerans düzeltmeleri ortak sınırdaki düğümleri kaydırmış olabilir.
+  // Çıktıdaki orta hattı son parsel geometrisinden yeniden türet; böylece harita
+  // ve DXF'teki ADA_ORTA_HAT parsel sınırlarıyla birebir çakışır.
+  let finalSplitLine = splitFull.length >= 2 ? splitFull : splitMid;
+  if (finalSplitLine.length >= 2) {
+    let rowA: MultiPoly = [];
+    let rowB: MultiPoly = [];
+    for (const pc of parcels) {
+      if (pc.row === 0) rowA = rowA.length ? mpUnion(rowA, [[pc.ring]]) : [[pc.ring]];
+      if (pc.row === 1) rowB = rowB.length ? mpUnion(rowB, [[pc.ring]]) : [[pc.ring]];
+    }
+    const a = largestPoly(rowA)?.[0];
+    const b = largestPoly(rowB)?.[0];
+    if (a && b) finalSplitLine = extendLineToRing(sharedBoundaryLine(a, b, ring, finalSplitLine), ring);
+  }
+
   const validCount = parcels.filter((x) => x.valid).length;
   log.push(
     `Toplam ${parcels.length} parsel üretildi; ${validCount} parsel tüm parselasyon ve yapılaşma şartlarını sağlıyor.`,
@@ -3072,7 +3133,7 @@ export function optimizeBlock(
     name: opts.name,
     ring,
     frontages,
-    splitLine: splitFull.length >= 2 ? splitFull : splitMid,
+    splitLine: finalSplitLine,
     parcels,
     leftover,
     leftoverArea,
