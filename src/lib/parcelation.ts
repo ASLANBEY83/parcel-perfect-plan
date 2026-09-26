@@ -3450,7 +3450,7 @@ export function optimizeBlock(
       return best;
     };
     for (let guard = 0; guard < 10 && Date.now() - topoT0 < 60000; guard++) {
-      const seed = parcels.filter((q) => !q.valid).sort((a, b) => b.area - a.area)[0];
+      const seed = parcels.filter((q) => !q.valid && !(q as Parcel & { _skip?: boolean })._skip).sort((a, b) => b.area - a.area)[0];
       if (!seed) break;
       const cluster = new Set<Parcel>([seed]);
       for (let grow = true; grow; ) {
