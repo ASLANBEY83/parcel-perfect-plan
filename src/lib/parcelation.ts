@@ -3402,6 +3402,108 @@ export function optimizeBlock(
       reshared++;
     }
     if (reshared) log.push(`Koşul garantisi: ${reshared} koşulsuz parsel komşusuyla birlikte yeniden bölüştürüldü.`);
+
+    // 7) KÜME HALİNDE YENİDEN İFRAZ: birbirine değen koşulsuz parseller tek bölge
+    // olarak alınır, parsel sıralarına ayrılır ve her sıra kendi yol cephesi boyunca
+    // eşit alanlı parsellere yeniden bölünür. Yalnız geçerli parsel sayısı artarsa
+    // ve alan korunursa uygulanır.
+    let reparcelled = 0;
+    const touches = (a: Ring, b: Ring) => {
+      const ba = bboxOf(a), bb = bboxOf(b);
+      if (ba[0] > bb[2] + 0.05 || ba[2] < bb[0] - 0.05 || ba[1] > bb[3] + 0.05 || ba[3] < bb[1] - 0.05) return false;
+      return mpUnion([[a]], [[b]]).length === 1;
+    };
+    const subdivide = (R: Ring, front: Pt[], row: number, cornerAllowed: boolean): Parcel[] | null => {
+      const A = Math.abs(ringArea(R));
+      const L = polylineLength(front);
+      if (A < p.minArea - 0.05 || L <= 0) return null;
+      const target = (p.minArea + p.maxArea) / 2;
+      const ns = new Set<number>();
+      for (const n of [Math.round(A / target), Math.ceil(A / p.maxArea), Math.floor(A / p.minArea), Math.round(A / target) + 1, Math.round(A / target) - 1])
+        if (n >= 1 && A / n <= p.maxArea + 0.05 && A / n >= p.minArea - 0.05) ns.add(n);
+      let best: Parcel[] | null = null;
+      let bestValid = -1;
+      for (const n of [...ns].sort((a, b) => b - a)) {
+        const cuts: number[] = [];
+        for (let j = 1; j < n; j++) cuts.push(chainageForArea(R, front, (A * j) / n));
+        const out: Parcel[] = [];
+        let sum = 0;
+        let ok = true;
+        for (let j = 0; j < n && ok; j++) {
+          const piece = largestPoly(mpIntersect([[chainagePiece(R, front, j ? cuts[j - 1] : null, j < n - 1 ? cuts[j] : null)]], [[R]]));
+          if (!piece) { ok = false; break; }
+          const r = openRing(piece[0]);
+          const base = { no: 0, ring: r, area: Math.abs(ringArea(r)), row, corner: false, valid: false } as unknown as Parcel;
+          let q = reEval(base, r);
+          if (!q.valid && cornerAllowed && (j === 0 || j === n - 1)) {
+            const qc = reEval({ ...base, corner: true } as Parcel, r);
+            if (qc.valid) q = qc;
+          }
+          sum += q.area;
+          out.push(q);
+        }
+        if (!ok || Math.abs(sum - A) > 0.5) continue;
+        const v = out.filter((q) => q.valid).length;
+        if (v > bestValid) { bestValid = v; best = out; }
+        if (v === n) break;
+      }
+      return best;
+    };
+    for (let guard = 0; guard < 10 && Date.now() - topoT0 < 60000; guard++) {
+      const seed = parcels.filter((q) => !q.valid).sort((a, b) => b.area - a.area)[0];
+      if (!seed) break;
+      const cluster = new Set<Parcel>([seed]);
+      for (let grow = true; grow; ) {
+        grow = false;
+        for (const q of parcels) {
+          if (q.valid || cluster.has(q)) continue;
+          if ([...cluster].some((c) => touches(c.ring, q.ring))) { cluster.add(q); grow = true; }
+        }
+      }
+      let region: MultiPoly = [];
+      for (const q of cluster) region = mpUnion(region, [[q.ring]]);
+      const regionArea = Math.abs(mpArea(region));
+      const hadCorner = [...cluster].some((q) => q.corner);
+      const rowIdx = rows.length === 2 ? [0, 1] : [seed.row];
+      const next: Parcel[] = [];
+      let rest = region;
+      let ok = true;
+      for (let k = 0; k < rowIdx.length; k++) {
+        const r = rowIdx[k];
+        const part = k === rowIdx.length - 1 ? rest : mpIntersect(rest, [[rows[r].ring]]);
+        rest = k === rowIdx.length - 1 ? [] : mpDifference(rest, part);
+        for (const poly of part) {
+          const pa = Math.abs(mpArea([poly]));
+          if (pa < 0.05) continue;
+          const R = openRing(poly[0]);
+          const front = rows[r]?.front ?? frontages[0];
+          const sub = subdivide(R, front, r, hadCorner);
+          if (!sub) { ok = false; break; }
+          next.push(...sub);
+        }
+        if (!ok) break;
+      }
+      const before = [...cluster].filter((q) => q.valid).length;
+      const after = next.filter((q) => q.valid).length;
+      const nextArea = next.reduce((a, q) => a + q.area, 0);
+      if (!ok || after <= before || Math.abs(nextArea - regionArea) > 1) {
+        // İyileşme yoksa bu küme olduğu gibi bırakılır; sonsuz döngüyü önlemek için işaretlenir.
+        for (const q of cluster) (q as Parcel & { _skip?: boolean })._skip = true;
+        if (parcels.every((q) => q.valid || (q as Parcel & { _skip?: boolean })._skip)) break;
+        continue;
+      }
+      const firstIdx = Math.min(...[...cluster].map((q) => parcels.indexOf(q)));
+      const keep = parcels.filter((q) => !cluster.has(q));
+      keep.splice(Math.min(firstIdx, keep.length), 0, ...next);
+      parcels.length = 0;
+      parcels.push(...keep);
+      reparcelled += cluster.size;
+    }
+    for (const q of parcels) delete (q as Parcel & { _skip?: boolean })._skip;
+    if (reparcelled) {
+      fillGaps();
+      log.push(`Koşul garantisi: ${reparcelled} koşulsuz parsel bölgesi yol cephesine göre yeniden ifraz edildi.`);
+    }
   }
 
   parcels.forEach((x, i) => (x.no = i + 1));
