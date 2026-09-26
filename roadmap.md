@@ -50,3 +50,5 @@
 
 - [x] Ada ayrım hattı kırıkları da tolerans içinde birleşme hedefi: parsel köşesi ayrım hattı kırığına tolerans kadar yakınsa köşe tam o noktaya taşınıyor (`snapTargets` = ada sınırı + uzatılmış ayrım hattı köşeleri).
 - [x] Küme birleşiminden sonra alan farkı, parselin YOL CEPHESİNDEKİ ortak köşesi hat boyunca kaydırılarak dengeleniyor (`rebalanceRoadCorner`, diklik şartı göz ardı). Doğrulama: tsgo 0, regresyon 7/7, 353ADA 18/18 geçerli.
+
+- [ ] Parametreler bölümünü yüklenen referanstaki iki sütunlu kompakt kart düzenine uyarlamak.
