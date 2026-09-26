@@ -8,3 +8,5 @@
 > Commits you push to the connected branch sync back to Lovable and show up in
 > the editor, so keep the branch in a working state.
 <!-- LOVABLE:END -->
+
+- `ADA_ORTA_HAT`, teorik bölme adayından değil nihai iki parsel sırasının ortak sınırından türetilir; harita ve DXF geometrileri böylece aynı kalır.
