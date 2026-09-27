@@ -529,7 +529,7 @@ export function runEngine(
         {
           const merged = rebuild(sol, sol.cuts.filter((_, k) => k !== ci));
           // Birleşim yalnız birleşen parsel koşulları sağlıyorsa kabul edilir (dev parsel üretilmez).
-          if (merged && merged.parcels.every((q) => q.area <= p.maxArea + 0.05 || !sol.parcels.every((o) => o.area <= p.maxArea + 0.05))) consider(merged);
+          if (merged && merged.parcels.every((q) => q.area <= p.maxArea + 0.05)) consider(merged);
         }
       }
       if (best) {
