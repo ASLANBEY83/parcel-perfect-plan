@@ -878,10 +878,9 @@ function evaluateParcel(
       issues.push(m);
     };
     // Parsel alanı HARD CONSTRAINT: kullanıcının girdiği min–max aralığı dışı geçersizdir.
-    // 0.05 m² sayısal tolerans: 399.99/400.01 gibi yuvarlama farkları ihlal sayılmaz.
-    if (area < p.minArea - 0.05)
+    if (area < p.minArea - 1e-6)
       fail(`Parsel alanı minimum değerin altında: ${area.toFixed(2)} m² < ${p.minArea} m²`);
-    if (area > p.maxArea + 0.05)
+    if (area > p.maxArea + 1e-6)
       fail(`Parsel alanı maksimum değerin üzerinde: ${area.toFixed(2)} m² > ${p.maxArea} m²`);
     const minF = corner ? p.cornerFront : p.midFront;
     if (frontage < minF - 1e-6)

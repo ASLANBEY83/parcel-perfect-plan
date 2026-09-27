@@ -371,7 +371,7 @@ export function runEngine(
     const rings = pieces(row, cuts);
     if (!rings) return null;
     const areas = rings.map((r) => ringArea(r));
-    const inRange = areas.filter((a) => a >= p.minArea - 0.05 && a <= p.maxArea + 0.05).length;
+    const inRange = areas.filter((a) => a >= p.minArea && a <= p.maxArea).length;
     const mean = areas.reduce((a, b) => a + b, 0) / n;
     const spread = Math.sqrt(areas.reduce((a, b) => a + (b - mean) ** 2, 0) / n);
     if (!full) return { row, cuts, targets, parcels: [], valid: inRange, spread };
@@ -400,8 +400,8 @@ export function runEngine(
 
   const solveRowGeneral = (row: Row): RowSol | null => {
     const target = (p.minArea + p.maxArea) / 2;
-    const nLo = Math.max(1, Math.ceil(row.area / (p.maxArea + 0.05)));
-    const nHi = Math.max(nLo, Math.floor(row.area / Math.max(1, p.minArea - 0.05)));
+    const nLo = Math.max(1, Math.ceil(row.area / (p.maxArea)));
+    const nHi = Math.max(nLo, Math.floor(row.area / Math.max(1, p.minArea)));
     const minW = Math.max(p.midFront, p.minBuildingFront + 2 * p.sideSetback);
     const capW = Math.max(1, Math.floor(row.Lf / minW) + 1);
     const ns: number[] = [];
@@ -529,7 +529,7 @@ export function runEngine(
         {
           const merged = rebuild(sol, sol.cuts.filter((_, k) => k !== ci));
           // Birleşim yalnız birleşen parsel koşulları sağlıyorsa kabul edilir (dev parsel üretilmez).
-          if (merged && merged.parcels.every((q) => q.area <= p.maxArea + 0.05)) consider(merged);
+          if (merged && merged.parcels.every((q) => q.area <= p.maxArea)) consider(merged);
         }
       }
       if (best) {
