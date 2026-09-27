@@ -371,7 +371,7 @@ export function runEngine(
     const rings = pieces(row, cuts);
     if (!rings) return null;
     const areas = rings.map((r) => ringArea(r));
-    const inRange = areas.filter((a) => a >= p.minArea - 0.05 && a <= p.maxArea + 0.05).length;
+    const inRange = areas.filter((a) => a >= p.minArea && a <= p.maxArea).length;
     const mean = areas.reduce((a, b) => a + b, 0) / n;
     const spread = Math.sqrt(areas.reduce((a, b) => a + (b - mean) ** 2, 0) / n);
     if (!full) return { row, cuts, targets, parcels: [], valid: inRange, spread };
@@ -400,8 +400,8 @@ export function runEngine(
 
   const solveRowGeneral = (row: Row): RowSol | null => {
     const target = (p.minArea + p.maxArea) / 2;
-    const nLo = Math.max(1, Math.ceil(row.area / (p.maxArea + 0.05)));
-    const nHi = Math.max(nLo, Math.floor(row.area / Math.max(1, p.minArea - 0.05)));
+    const nLo = Math.max(1, Math.ceil(row.area / (p.maxArea)));
+    const nHi = Math.max(nLo, Math.floor(row.area / Math.max(1, p.minArea)));
     const minW = Math.max(p.midFront, p.minBuildingFront + 2 * p.sideSetback);
     const capW = Math.max(1, Math.floor(row.Lf / minW) + 1);
     const ns: number[] = [];
@@ -526,7 +526,11 @@ export function runEngine(
           if (best && invalidCount(best) === 0) break;
         }
         // (b) Kesimi kaldır: komşusuyla birleşir.
-        consider(rebuild(sol, sol.cuts.filter((_, k) => k !== ci)));
+        {
+          const merged = rebuild(sol, sol.cuts.filter((_, k) => k !== ci));
+          // Birleşim yalnız birleşen parsel koşulları sağlıyorsa kabul edilir (dev parsel üretilmez).
+          if (merged && merged.parcels.every((q) => q.area <= p.maxArea)) consider(merged);
+        }
       }
       if (best) {
         sol = best;
@@ -581,7 +585,6 @@ export function runEngine(
       } catch {
         continue;
       }
-      if (dbg) console.error("split", w, !!ra, !!rb, ra && ringArea(ra[0]), rb && ringArea(rb[0]), adaArea);
       if (!ra || !rb) continue;
       if (dist(B[0], midFull[0]) > dist(B[B.length - 1], midFull[0])) B = B.slice().reverse();
       const ringA = ensureCCW(openRing(ra[0]));
@@ -591,7 +594,6 @@ export function runEngine(
       const rowA = mkRow(ringA, FA, midFull, 0, A);
       const rowB = mkRow(ringB, FB, midFull, 1, B);
       if (!rowA || !rowB) continue;
-      if (dbg) console.error("rows", rowA.area / rowA.Lf, rowB.area / rowB.Lf, rowA.Lf, rowB.Lf);
       if (rowA.area / polylineLength(A) < minRowDepth || rowB.area / polylineLength(B) < minRowDepth) continue;
       if (Math.abs(rowA.area + rowB.area - adaArea) > 0.5) continue;
       solveLayout([rowA, rowB], midFull);

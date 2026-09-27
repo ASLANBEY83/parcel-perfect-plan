@@ -204,17 +204,17 @@ const R = runTest("REG (290-330, 6/4/7)", ring, {
 console.log(JSON.stringify(R.out, null, 2));
 const rp = R.block.parcels;
 const assertions: [string, boolean][] = [
-  ["330 m² üzeri parsel geçerli sayılmıyor", !rp.some((x) => x.valid && x.area > 330)],
-  ["290 m² altı parsel geçerli sayılmıyor", !rp.some((x) => x.valid && x.area < 290)],
-  ["393-668 m² büyük parseller geçerli değil", !rp.some((x) => x.valid && x.area > 340)],
+  ["330 m² üzeri parsel geçerli sayılmıyor", !rp.some((x) => x.valid && x.area > 330 + 1e-6)],
+  ["290 m² altı parsel geçerli sayılmıyor", !rp.some((x) => x.valid && x.area < 290 - 1e-6)],
+  ["393-668 m² büyük parseller geçerli değil", !rp.some((x) => x.valid && x.area > 340 + 1e-6)],
   [
     "yapılaşabilirlik yetersizliği açık red nedeni",
     rp.filter((x) => !x.valid).every((x) => x.issues.some((i) => !i.startsWith("ℹ"))) &&
       rp.some((x) => x.issues.some((i) => /derinlik|yapı alanı|çekme|alan/i.test(i))),
   ],
-  ["TEST A alan aralığı ihlali yok", !A.block.parcels.some((x) => x.valid && (x.area < 275 || x.area > 400))],
-  ["TEST B alan aralığı ihlali yok", !B.block.parcels.some((x) => x.valid && (x.area < 290 || x.area > 330))],
-  ["TEST C geçerli parsellerde alan ihlali yok", !C.block.parcels.some((x) => x.valid && (x.area < 275 || x.area > 400))],
+  ["TEST A alan aralığı ihlali yok", !A.block.parcels.some((x) => x.valid && (x.area < 275 - 1e-6 || x.area > 400 + 1e-6))],
+  ["TEST B alan aralığı ihlali yok", !B.block.parcels.some((x) => x.valid && (x.area < 290 - 1e-6 || x.area > 330 + 1e-6))],
+  ["TEST C geçerli parsellerde alan ihlali yok", !C.block.parcels.some((x) => x.valid && (x.area < 275 - 1e-6 || x.area > 400 + 1e-6))],
 ];
 let failCount = 0;
 for (const [name, ok] of assertions) {

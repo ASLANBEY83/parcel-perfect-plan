@@ -55,3 +55,9 @@
 
 - [x] Ada orta hattını kırmızı gösterip ada sınırı dışına taşmasını engellemek.
 - [x] Ada orta hattını iki parsel sırasının nihai ortak sınırından türeterek parsel sınırlarıyla birebir çakıştırmak.
+- [x] Parsel üretimini genel zemine oturtma (plan onaylandı)
+  - src/lib/engine/ruled-engine.ts: 5 aşamalı genel motor; eski motor yalnız yedek
+  - scripts/verify-all-adas.ts: örnek, 340, 350, 353 × (275-400, 290-330)
+  - Sonuç: örnek/350/353 tüm setlerde GEÇTİ; 340 artık 0 m², 30/34 geçerli
+- [ ] 340 ada sivri uç/köşe parselleri (4 koşulsuz) — genel motorda köşe parseli kütleden geri hesap eklenecek
+- [ ] Büyük adalarda süre (~3 dk): genel motor tam başarılı olmayınca eski motor da çalışıyor
