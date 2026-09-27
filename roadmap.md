@@ -61,3 +61,7 @@
   - Sonuç: örnek/350/353 tüm setlerde GEÇTİ; 340 artık 0 m², 30/34 geçerli
 - [ ] 340 ada sivri uç/köşe parselleri (4 koşulsuz) — genel motorda köşe parseli kütleden geri hesap eklenecek
 - [ ] Büyük adalarda süre (~3 dk): genel motor tam başarılı olmayınca eski motor da çalışıyor
+
+## Açık (kullanıcı %90 yeterli dedi, beklemede)
+- [ ] 340 sivri uç/köşe parselleri: yapı derinliği için köşe parselini yapı bloğundan geri hesaplama
+- [ ] Büyük adalarda süre (~3 dk): eski motorun yedek çalışmasını sınırlama
