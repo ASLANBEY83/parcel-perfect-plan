@@ -526,7 +526,11 @@ export function runEngine(
           if (best && invalidCount(best) === 0) break;
         }
         // (b) Kesimi kaldır: komşusuyla birleşir.
-        consider(rebuild(sol, sol.cuts.filter((_, k) => k !== ci)));
+        {
+          const merged = rebuild(sol, sol.cuts.filter((_, k) => k !== ci));
+          // Birleşim yalnız birleşen parsel koşulları sağlıyorsa kabul edilir (dev parsel üretilmez).
+          if (merged && merged.parcels.every((q) => q.area <= p.maxArea + 0.05 || !sol.parcels.every((o) => o.area <= p.maxArea + 0.05))) consider(merged);
+        }
       }
       if (best) {
         sol = best;
@@ -581,7 +585,6 @@ export function runEngine(
       } catch {
         continue;
       }
-      if (dbg) console.error("split", w, !!ra, !!rb, ra && ringArea(ra[0]), rb && ringArea(rb[0]), adaArea);
       if (!ra || !rb) continue;
       if (dist(B[0], midFull[0]) > dist(B[B.length - 1], midFull[0])) B = B.slice().reverse();
       const ringA = ensureCCW(openRing(ra[0]));
@@ -591,7 +594,6 @@ export function runEngine(
       const rowA = mkRow(ringA, FA, midFull, 0, A);
       const rowB = mkRow(ringB, FB, midFull, 1, B);
       if (!rowA || !rowB) continue;
-      if (dbg) console.error("rows", rowA.area / rowA.Lf, rowB.area / rowB.Lf, rowA.Lf, rowB.Lf);
       if (rowA.area / polylineLength(A) < minRowDepth || rowB.area / polylineLength(B) < minRowDepth) continue;
       if (Math.abs(rowA.area + rowB.area - adaArea) > 0.5) continue;
       solveLayout([rowA, rowB], midFull);
