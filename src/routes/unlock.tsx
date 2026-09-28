@@ -29,8 +29,12 @@ function Unlock() {
     try {
       const password = String(new FormData(e.currentTarget).get("password") ?? "");
       const { ok } = await unlock({ data: { password } });
-      if (ok) await router.navigate({ to: "/" });
-      else setError(true);
+      if (ok) {
+        await router.invalidate();
+        await router.navigate({ to: "/" });
+      } else setError(true);
+    } catch {
+      setError(true);
     } finally {
       setBusy(false);
     }

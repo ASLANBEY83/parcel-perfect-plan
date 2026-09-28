@@ -10,7 +10,7 @@ function sessionConfig() {
     password: process.env["SESSION_SECRET"]!,
     name: "site-gate",
     maxAge: 60 * 60 * 24 * 7, // 7 gün
-    cookie: { httpOnly: true, secure: true, sameSite: "lax" as const, path: "/" },
+    cookie: { httpOnly: true, secure: true, sameSite: "none" as const, partitioned: true, path: "/" },
   };
 }
 
