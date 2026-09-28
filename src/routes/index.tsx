@@ -17,6 +17,7 @@ import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
 import { Check, Crosshair, Download, FileText, GitBranch, Layers, Map as MapIcon, Play, RefreshCw, SlidersHorizontal, Trash2, Upload, X } from "lucide-react";
 import type { WorkerRequest, WorkerResponse } from "@/workers/parcelation.worker";
+import { requireUnlocked } from "@/lib/gate.functions";
 
 function PanelItem({
   value,
@@ -47,6 +48,7 @@ function PanelItem({
 
 
 export const Route = createFileRoute("/")({
+  beforeLoad: () => requireUnlocked(),
   head: () => ({
     meta: [
       { title: "Parselasyon Optimizasyon | İmar Adası Parsel ve Yapı Analizi" },
