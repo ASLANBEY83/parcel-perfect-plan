@@ -120,13 +120,73 @@ function RootShell({ children }: { children: ReactNode }) {
   );
 }
 
+/** Kopyalamayı caydırıcı önlemler: sağ tık, seçim, kes/kopyala ve kaydet/incele kısayolları. */
+function CopyProtection() {
+  useEffect(() => {
+    const block = (e: Event) => {
+      const t = e.target as HTMLElement | null;
+      // Form alanlarında kopyala/yapıştır çalışmaya devam etsin.
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
+      e.preventDefault();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      const k = e.key.toLowerCase();
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && ["s", "u", "p", "c"].includes(k)) {
+        const t = e.target as HTMLElement | null;
+        if (k === "c" && t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
+        e.preventDefault();
+      }
+      if (e.key === "F12") e.preventDefault();
+    };
+    document.addEventListener("contextmenu", block);
+    document.addEventListener("copy", block);
+    document.addEventListener("cut", block);
+    document.addEventListener("selectstart", block);
+    document.addEventListener("dragstart", block);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("contextmenu", block);
+      document.removeEventListener("copy", block);
+      document.removeEventListener("cut", block);
+      document.removeEventListener("selectstart", block);
+      document.removeEventListener("dragstart", block);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, []);
+  return null;
+}
+
+/** Ekran görüntüsü alınsa bile kaynağı belli eden, tıklamayı engellemeyen filigran. */
+function Watermark() {
+  return (
+    <div
+      aria-hidden
+      className="pointer-events-none fixed inset-0 z-[9999] select-none overflow-hidden"
+    >
+      <div
+        className="absolute -inset-1/2 flex flex-wrap content-center justify-center gap-24 opacity-[0.045]"
+        style={{ transform: "rotate(-24deg)" }}
+      >
+        {Array.from({ length: 60 }).map((_, i) => (
+          <span key={i} className="whitespace-nowrap text-lg font-semibold text-foreground">
+            İFRAZ • Parselasyon Optimizasyon
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
 
   return (
     <QueryClientProvider client={queryClient}>
+      <CopyProtection />
       {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
       <Outlet />
+      <Watermark />
     </QueryClientProvider>
   );
 }
